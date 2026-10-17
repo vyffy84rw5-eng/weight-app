@@ -31,11 +31,10 @@
     <h2 id="one-name" style="font-size:22px;margin:8px 4px 2px"></h2>
     <p class="sub" id="one-meta"></p>
 
-    <section class="card step"><span class="no">1</span><div><h2>目標</h2><div class="row2" id="s-goal"></div></div></section>
-    <section class="card step"><span class="no">2</span><div><h2>今週の平均</h2><div class="row2" id="s-week"></div></div></section>
-    <section class="card step"><span class="no">3</span><div><h2>先週との差</h2><div class="row2" id="s-diff"></div></div></section>
-    <section class="card step"><span class="no">4</span><div><h2>ペース</h2><div class="row2" id="s-pace"></div></div></section>
-    <section class="card step"><span class="no">5</span><div><h2>今の状況</h2><div class="judge-big" id="s-judge"></div></div></section>
+    <section class="card">
+      <div class="sum-grid" id="sum"></div>
+      <div class="sum-judge" id="s-judge"></div>
+    </section>
 
     <section class="card">
       <h2>週の平均の推移</h2>
@@ -157,34 +156,23 @@
     $('one-name').textContent = nameOf(u);
     $('one-meta').innerHTML = `${esc(u.email || '')}<br>登録 ${md(new Date(u.created_at))}・記録 ${u.days}日分${u.last ? `・最後 ${md(parse(u.last))}` : ''}`;
 
-    // 1. 目標
+    // 1〜5を1枚に: 目標 → 今週の平均 → 先週との差 → ペース → 判定
     const g = u.goal || {};
-    if (g.target_kg && g.target_day) {
-      const remain = j.remainKg, days = j.remainDays;
-      $('s-goal').innerHTML =
-        cell('目標', `${fmt(g.target_kg)}<small>kg</small>`, `${parse(g.target_day).getFullYear()}/${md(parse(g.target_day))}まで（あと${Math.max(days, 0)}日）`) +
-        cell('あと', remain == null ? '—' : `${signed(remain)}<small>kg</small>`, j.now ? `今 ${fmt(j.now)}kg` : '', remain == null ? '' : cls(remain));
-    } else {
-      $('s-goal').innerHTML = `<div style="grid-column:1/-1;color:var(--text-2);font-size:14px">目標がまだ入っていません</div>`;
-    }
-    // 2. 今週の平均
     const w0 = ws[ws.length - 1], w1 = ws.length > 1 ? ws[ws.length - 2] : null;
-    $('s-week').innerHTML = w0
-      ? cell('今週の平均', `${fmt(w0.avg)}<small>kg</small>`, `${md(w0.start)}〜　${w0.n}日分`) + cell('先週の平均', w1 ? `${fmt(w1.avg)}<small>kg</small>` : '—', w1 ? `${md(w1.start)}〜　${w1.n}日分` : '記録なし')
-      : '<div style="grid-column:1/-1;color:var(--text-2);font-size:14px">記録がありません</div>';
-    // 3. 先週との差
     const diff = w0 && w1 ? w0.avg - w1.avg : null;
-    $('s-diff').innerHTML = cell('週の平均どうし', diff == null ? '—' : `${signed(diff)}<small>kg</small>`, diff == null ? '先週の記録がありません' : '', diff == null ? '' : cls(diff)) +
-      cell('1か月にすると', diff == null ? '—' : `${signed(diff * 30 / 7)}<small>kg</small>`, diff == null ? '' : 'この1週の差が続いた場合', diff == null ? '' : cls(diff));
-    // 4. ペース
-    $('s-pace').innerHTML = fc
-      ? cell('今週のペース', `${signed(fc.perWeek)}<small>kg/週</small>`, `直近${fc.used.length}週から`, cls(fc.perWeek)) +
-        cell('今月のペース', `${signed(fc.perMonth)}<small>kg/月</small>`, '', cls(fc.perMonth)) +
-        cell(`今月末（${md(j.monthEnd.date)}）の予想`, `${fmt(j.monthEnd.kg)}<small>kg</small>`, '今のペースのまま') +
-        cell('目標に必要な月ペース', j.need == null ? '—' : `${signed(j.need)}<small>kg/月</small>`, j.need == null ? '目標なし' : '')
-      : cell('今月のペース', '—', j.why) + cell('目標に必要な月ペース', j.need == null ? '—' : `${signed(j.need)}<small>kg/月</small>`, j.need == null ? '目標なし' : '');
-    // 5. 判定
-    $('s-judge').innerHTML = `${badge(j)}<span class="why">${esc(j.why)}</span>`;
+    const c = (k, v, n, extra = '') => `<div><div class="k">${k}</div><div class="v ${extra}">${v}</div><div class="n">${n || '&nbsp;'}</div></div>`;
+    const hasGoal = g.target_kg && g.target_day;
+    $('sum').innerHTML =
+      c('目標', hasGoal ? `${fmt(g.target_kg)}<small>kg</small>` : '—', hasGoal ? `${md(parse(g.target_day))}・あと${Math.max(j.remainDays, 0)}日` : '目標なし') +
+      c('目標まで', j.remainKg == null ? '—' : `${signed(j.remainKg)}<small>kg</small>`, j.now ? `今 ${fmt(j.now)}kg` : '', j.remainKg == null ? '' : cls(j.remainKg)) +
+      c('今週の平均', w0 ? `${fmt(w0.avg)}<small>kg</small>` : '—', w0 ? `${md(w0.start)}〜 ${w0.n}日分` : '記録なし') +
+      c('先週との差', diff == null ? '—' : `${signed(diff)}<small>kg</small>`, w1 ? `先週 ${fmt(w1.avg)}kg` : '先週なし', diff == null ? '' : cls(diff)) +
+      c('今週のペース', fc ? `${signed(fc.perWeek)}<small>kg/週</small>` : '—', fc ? `直近${fc.used.length}週から` : '', fc ? cls(fc.perWeek) : '') +
+      c('今月のペース', fc ? `${signed(fc.perMonth)}<small>kg/月</small>` : '—', fc ? '' : 'まだ出ません', fc ? cls(fc.perMonth) : '') +
+      c(fc ? `${md(j.monthEnd.date)}の予想` : '月末の予想', fc ? `${fmt(j.monthEnd.kg)}<small>kg</small>` : '—', fc ? '今のペースのまま' : '') +
+      c('必要な月ペース', j.need == null ? '—' : `${signed(j.need)}<small>kg/月</small>`, j.need == null ? '目標なし' : '目標に間に合う') +
+      c('記録', `${u.days}<small>日分</small>`, u.last ? `最後 ${md(parse(u.last))}` : '');
+    $('s-judge').innerHTML = `${badge(j)}<span>${esc(j.why)}</span>`;
 
     chart.draw(u.data, ws, fc);
     renderWeeks($('one-weeks'), ws);
@@ -216,7 +204,10 @@
     html += cell('1日に使う量の目安', plan ? `${Math.round(plan.tdee).toLocaleString()}<small>kcal</small>` : '—', plan ? '身長・年齢・性別・運動の習慣から' : '身長・年齢が入っていません');
     html += cell('目標に向けた食事の目安', plan ? `${Math.round(plan.eat).toLocaleString()}<small>kcal</small>` : '—', plan && plan.diffDay ? `1日 ${plan.diffDay < 0 ? '−' : '+'}${Math.abs(Math.round(plan.diffDay)).toLocaleString()}kcal` : '');
     html += `<div style="grid-column:1/-1">${cell('いま設定しているカロリー', u.kcal ? `${u.kcal.toLocaleString()}<small>kcal/日</small>` : '未設定', u.kcal ? 'お客様の画面にも表示しています' : '設定すると、お客様の画面に表示されます')}</div>`;
-    $('kcal-body').innerHTML = html + '</div>';
+    const kcalUse = u.kcal || (plan ? plan.eat : null);
+    const losing = (u.goal?.target_kg && u.j.now) ? u.goal.target_kg < u.j.now : true;
+    html += '</div>' + (kcalUse && u.j.now ? WP.pfcHtml(kcalUse, u.kcal ? '設定したカロリー' : '計算の目安', u.j.now, losing) : '');
+    $('kcal-body').innerHTML = html;
     $('kcal-in').value = u.kcal || '';
     $('kcal-form').hidden = !coachOk;
     $('kcal-msg').textContent = coachOk ? '' : 'カロリー設定の表がまだありません';

@@ -329,5 +329,87 @@
   }
   const badge = j => `<span class="status s-${j.level}">${j.label}</span>`;
 
-  window.WP = { MIN_DAYS, DAY, ymd, parse, md, WD, fmt, signed, cls, esc, weeks, forecast, renderStats, createChart, renderWeeks, goalHtml, tdeeOf, kcalPlan, judge, badge };
+
+  // ---------- PFCバランス ----------
+  // たんぱく質: 減量中は体重×2.0g、それ以外は×1.6g（ただし全体の35%まで）。脂質: 25%。炭水化物: 残り。
+  function pfc(kcal, nowKg, losing) {
+    if (!(kcal > 0 && nowKg > 0)) return null;
+    let p = nowKg * (losing ? 2.0 : 1.6);
+    p = Math.min(p, kcal * 0.35 / 4);
+    const f = kcal * 0.25 / 9;
+    const c = Math.max(0, (kcal - p * 4 - f * 9) / 4);
+    return { kcal, p, f, c, pct: { p: p * 4 / kcal * 100, f: f * 9 / kcal * 100, c: c * 4 / kcal * 100 } };
+  }
+
+  // コンビニでそろう定番（1個あたりのおおよその値。商品により違う）
+  const KONBINI = [
+    { name: 'サラダチキン', p: 24, f: 1.5, c: 0.5, main: true },
+    { name: 'ゆで卵', p: 6.5, f: 5, c: 0.3 },
+    { name: '焼き鮭のパック', p: 18, f: 6, c: 0.5, main: true },
+    { name: '焼き鳥（塩）2本', p: 17, f: 7, c: 2, main: true },
+    { name: '豆腐バー', p: 11, f: 6, c: 3, main: true },
+    { name: '納豆', p: 7, f: 4.5, c: 6 },
+    { name: 'ギリシャヨーグルト（無糖）', p: 10, f: 0, c: 12 },
+    { name: 'プロテイン飲料', p: 15, f: 0, c: 10 },
+    { name: '鮭おにぎり', p: 5, f: 1.5, c: 38, carb: true },
+    { name: 'もち麦おにぎり', p: 4, f: 1.5, c: 36, carb: true },
+    { name: 'ご飯パック（小）', p: 4, f: 1.5, c: 51, carb: true },
+    { name: 'ざるそば', p: 13, f: 2, c: 60, carb: true },
+    { name: 'サンドイッチ（卵）', p: 10, f: 14, c: 26, carb: true },
+    { name: 'バナナ', p: 1, f: 0.2, c: 22 },
+    { name: '野菜サラダ', p: 1.5, f: 0.3, c: 5, veg: true },
+    { name: '具だくさん味噌汁', p: 5, f: 3, c: 8, veg: true },
+    { name: '無調整豆乳', p: 7, f: 6, c: 5 },
+    { name: 'ミックスナッツ（小袋）', p: 5, f: 13, c: 4 },
+  ].map(x => ({ ...x, kcal: x.p * 4 + x.f * 9 + x.c * 4 }));
+
+  // 1食の目標に近い組み合わせ（2〜4品）を3つ。主菜か主食のどちらかは必ず入れる
+  function mealExamples(target, count = 3) {
+    const n = KONBINI.length, combos = [];
+    const score = items => {
+      const t = items.reduce((a, x) => ({ p: a.p + x.p, f: a.f + x.f, c: a.c + x.c, kcal: a.kcal + x.kcal }), { p: 0, f: 0, c: 0, kcal: 0 });
+      const e = 2 * Math.abs(t.p - target.p) / target.p + Math.abs(t.f - target.f) / target.f + Math.abs(t.c - target.c) / Math.max(target.c, 10) + Math.abs(t.kcal - target.kcal) / target.kcal;
+      return { items, t, e: e + (items.some(x => x.veg) ? 0 : 0.15) };   // 野菜が入る組み合わせを少し優先
+    };
+    for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) {
+      combos.push(score([KONBINI[a], KONBINI[b]]));
+      for (let c = b + 1; c < n; c++) {
+        combos.push(score([KONBINI[a], KONBINI[b], KONBINI[c]]));
+        for (let d = c + 1; d < n; d++) combos.push(score([KONBINI[a], KONBINI[b], KONBINI[c], KONBINI[d]]));
+      }
+    }
+    const ok = combos.filter(x => x.items.some(i => i.main) && x.items.some(i => i.carb || target.c < 25)).sort((x, y) => x.e - y.e);
+    const picked = [];
+    for (const x of ok) {
+      // 似た組み合わせを避ける（同じ主菜は1回まで）
+      const main = x.items.find(i => i.main)?.name;
+      if (picked.some(y => y.items.find(i => i.main)?.name === main)) continue;
+      picked.push(x);
+      if (picked.length >= count) break;
+    }
+    return picked;
+  }
+
+  function pfcHtml(kcal, source, nowKg, losing) {
+    const d = pfc(kcal, nowKg, losing);
+    if (!d) return '';
+    const meal = { kcal: d.kcal / 3, p: d.p / 3, f: d.f / 3, c: d.c / 3 };
+    const g = v => Math.round(v);
+    const bar = `<div class="pfc-bar" role="img" aria-label="たんぱく質${g(d.pct.p)}% 脂質${g(d.pct.f)}% 炭水化物${g(d.pct.c)}%">
+        <span class="b-p" style="width:${d.pct.p}%"></span><span class="b-f" style="width:${d.pct.f}%"></span><span class="b-c" style="width:${d.pct.c}%"></span></div>`;
+    const row = (cls, name, gram, pct) => `<div class="pfc-row"><span class="dot ${cls}"></span><span>${name}</span><b>${g(gram)}g</b><span class="muted">${g(pct)}%</span></div>`;
+    const ex = mealExamples(meal).map((x, i) => `<div class="meal">
+        <div class="meal-head"><b>例${'ABC'[i]}</b><span>${g(x.t.kcal)}kcal・P${g(x.t.p)} F${g(x.t.f)} C${g(x.t.c)}</span></div>
+        <div class="meal-items">${x.items.map(it => esc(it.name)).join(' ＋ ')}</div></div>`).join('');
+    return `<div class="pfc">
+      <div class="pfc-title">1日 <b>${Math.round(d.kcal).toLocaleString()}kcal</b> のPFCバランス<span class="muted">（${source}）</span></div>
+      ${bar}
+      <div class="pfc-rows">${row('b-p', 'たんぱく質', d.p, d.pct.p)}${row('b-f', '脂質', d.f, d.pct.f)}${row('b-c', '炭水化物', d.c, d.pct.c)}</div>
+      <div class="pfc-title" style="margin-top:14px">1食あたり（3食）<b>${g(meal.kcal)}kcal</b>・P${g(meal.p)}g F${g(meal.f)}g C${g(meal.c)}g</div>
+      <div class="meals">${ex}</div>
+      <div class="muted" style="font-size:12px;margin-top:6px">コンビニの定番品で組んだ例です。数値は目安で、商品によって違います。</div>
+    </div>`;
+  }
+
+  window.WP = { MIN_DAYS, DAY, ymd, parse, md, WD, fmt, signed, cls, esc, weeks, forecast, renderStats, createChart, renderWeeks, goalHtml, tdeeOf, kcalPlan, judge, badge, pfc, mealExamples, pfcHtml };
 })();
