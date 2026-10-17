@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="体重">
+<meta name="theme-color" content="#f5f5f7">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>体重ペース</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <!-- ログイン -->
+  <section id="view-login" class="login" hidden>
+    <h1>体重ペース</h1>
+    <p class="sub" style="margin-left:0">毎朝はかる → 週の平均 → 1か月のペースを予測</p>
+    <div class="card">
+      <form id="f-login" autocomplete="on">
+        <p id="login-lead">メールアドレスとパスワードでログインします。</p>
+        <input id="email" type="email" inputmode="email" autocomplete="email" placeholder="メールアドレス" required aria-label="メールアドレス">
+        <input id="password" type="password" autocomplete="current-password" placeholder="パスワード（8文字以上）" minlength="8" required aria-label="パスワード">
+        <button class="primary" type="submit" id="login-btn">ログイン</button>
+        <button class="link" type="button" id="toggle-mode">はじめての方はこちら（登録）</button>
+      </form>
+      <div class="err" id="login-err" role="alert"></div>
+    </div>
+  </section>
+
+  <!-- アプリ本体 -->
+  <div id="view-app" hidden>
+    <div class="top">
+      <h1>体重ペース</h1>
+      <div class="links"><a href="admin.html" id="to-admin" hidden>管理</a></div>
+    </div>
+    <p class="sub">毎朝はかる → 週の平均 → 1か月のペースを予測</p>
+
+    <section class="card">
+      <h2>けさの体重</h2>
+      <form class="entry" id="form" autocomplete="off">
+        <div class="field">
+          <input id="w" type="number" inputmode="decimal" step="0.1" min="20" max="300" placeholder="00.0" aria-label="体重（kg）">
+          <span class="unit">kg</span>
+        </div>
+        <button class="primary" type="submit">記録</button>
+      </form>
+      <div class="date-row">
+        <span>日付</span>
+        <input id="d" type="date" aria-label="記録する日">
+      </div>
+      <div class="msg" id="msg" role="status"></div>
+    </section>
+
+    <section class="stats" id="stats"></section>
+
+    <section class="card">
+      <h2>週の平均の推移</h2>
+      <div class="chart-wrap">
+        <svg id="chart" role="img" aria-label="週ごとの平均体重のグラフ"></svg>
+        <div class="tip" id="tip"></div>
+      </div>
+      <div class="legend" id="legend">
+        <span><i class="sw-line"></i>週の平均</span>
+        <span><i class="sw-dash"></i>このペースの予測</span>
+        <span><i class="sw-dot"></i>毎日の記録</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>目標ペース</h2>
+      <form class="grid2" id="goal" autocomplete="off">
+        <label>目標の体重（kg）<input id="g-target_kg" type="number" inputmode="decimal" step="0.1" min="20" max="300"></label>
+        <label>いつまでに<input id="g-target_day" type="date"></label>
+        <label>身長（cm）<input id="g-height_cm" type="number" inputmode="decimal" step="0.1" min="100" max="230"></label>
+        <label>年齢<input id="g-age" type="number" inputmode="numeric" step="1" min="10" max="100"></label>
+        <label>性別<select id="g-sex"><option value="m">男性</option><option value="f">女性</option></select></label>
+        <label>運動の習慣<select id="g-activity">
+          <option value="1.2">ほぼしない</option>
+          <option value="1.375">週1〜2回</option>
+          <option value="1.55" selected>週3〜5回</option>
+          <option value="1.725">ほぼ毎日</option>
+        </select></label>
+      </form>
+      <div class="goal-out" id="goal-out"></div>
+    </section>
+
+    <section class="card">
+      <h2>週ごとの平均</h2>
+      <div id="weeks"></div>
+    </section>
+
+    <section class="card">
+      <h2>毎日の記録</h2>
+      <div id="days"></div>
+    </section>
+
+    <section class="card">
+      <h2>アカウント</h2>
+      <div class="kv">ログイン中: <span id="me-email"></span></div>
+      <div style="margin-top:10px"><button class="small-btn" type="button" id="logout">ログアウト</button></div>
+    </section>
+
+    <p class="foot">週は月曜はじまり。予測は、記録が3日以上ある週の平均を<br>直近4週ぶん使って、まっすぐ伸ばした値です。<br>必要な食事の量は目安の計算です（体脂肪1kg＝約7,200kcal）。</p>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script src="shared.js"></script>
+<script>
+(() => {
+  const { ymd, parse, md, WD, fmt, weeks, forecast, renderStats, createChart, renderWeeks, goalHtml } = WP;
+  const sb = supabase.createClient(WP_CONFIG.url, WP_CONFIG.key, { auth: { persistSession: true, autoRefreshToken: true } });
+  const $ = id => document.getElementById(id);
+  const today = ymd(new Date());
+  let me = null;        // auth user
+  let data = {};        // { day: kg }
+  let sources = {};     // { day: 'manual' | 'health' }
+  let goal = {};
+  const chart = createChart({ svg: $('chart'), tip: $('tip'), legend: $('legend') });
+
+  // ---------- ログイン（メール＋パスワード） ----------
+  let signup = false;
+  const loginErr = t => { $('login-err').textContent = t || ''; };
+  function setMode(isSignup) {
+    signup = isSignup;
+    $('login-lead').textContent = signup ? 'メールアドレスと、新しく決めるパスワード（8文字以上）を入れてください。' : 'メールアドレスとパスワードでログインします。';
+    $('login-btn').textContent = signup ? '登録してはじめる' : 'ログイン';
+    $('toggle-mode').textContent = signup ? '登録済みの方はこちら（ログイン）' : 'はじめての方はこちら（登録）';
+    $('password').autocomplete = signup ? 'new-password' : 'current-password';
+    loginErr();
+  }
+  $('toggle-mode').addEventListener('click', () => setMode(!signup));
+  $('f-login').addEventListener('submit', async e => {
+    e.preventDefault(); loginErr();
+    const email = $('email').value.trim(), password = $('password').value;
+    if (password.length < 8) { loginErr('パスワードは8文字以上にしてください'); return; }
+    e.target.classList.add('busy');
+    const res = signup ? await sb.auth.signUp({ email, password }) : await sb.auth.signInWithPassword({ email, password });
+    e.target.classList.remove('busy');
+    const err = res.error;
+    if (err) {
+      const m = String(err.message || '');
+      if (/already registered/i.test(m)) loginErr('このメールアドレスは登録済みです。「ログイン」から入ってください。');
+      else if (/not confirmed/i.test(m)) loginErr('まだ登録の確認が済んでいません。管理者にお知らせください。');
+      else if (/invalid login/i.test(m)) loginErr('メールアドレスかパスワードが違います。');
+      else if (err.status === 429) loginErr('回数が多すぎます。少し待ってからもう一度お試しください。');
+      else loginErr('うまくいきませんでした: ' + m);
+      return;
+    }
+    if (signup && !res.data.session) loginErr('登録を受け付けました。確認が済むまでお待ちください（管理者が確認します）。');
+  });
+  $('logout').addEventListener('click', async () => { await sb.auth.signOut(); });
+
+  sb.auth.onAuthStateChange((_ev, session) => {
+    const u = session?.user || null;
+    if (u && me && u.id === me.id) return;
+    me = u;
+    // onAuthStateChange の中で直接 await するとロックで止まるため、次の周回で動かす
+    setTimeout(() => { if (me) start(); else showLogin(); }, 0);
+  });
+
+  function showLogin() {
+    data = {}; goal = {};
+    $('view-app').hidden = true; $('view-login').hidden = false;
+    $('password').value = '';
+  }
+
+  // ---------- 読み込み ----------
+  async function start() {
+    $('view-login').hidden = true; $('view-app').hidden = false;
+    $('me-email').textContent = me.email || '';
+    $('msg').textContent = '読み込み中…'; $('msg').style.color = 'var(--text-3)';
+    const [w, g, p] = await Promise.all([
+      sb.from('weights').select('day,kg,source').eq('user_id', me.id).order('day'),
+      sb.from('goals').select('*').eq('user_id', me.id).maybeSingle(),
+      sb.from('profiles').select('is_admin').eq('id', me.id).maybeSingle(),
+    ]);
+    if (w.error) { $('msg').style.color = 'var(--up)'; $('msg').textContent = '記録を読み込めませんでした。電波を確かめて開き直してください。'; return; }
+    data = {}; sources = {};
+    (w.data || []).forEach(r => { data[r.day] = Number(r.kg); sources[r.day] = r.source; });
+    goal = g.data || {};
+    ['target_kg', 'target_day', 'height_cm', 'age', 'sex', 'activity'].forEach(k => {
+      if (goal[k] != null) $('g-' + k).value = k === 'activity' ? String(Number(goal[k])) : goal[k];
+    });
+    $('to-admin').hidden = !p.data?.is_admin;
+    $('msg').textContent = '';
+    syncInput();
+    render();
+  }
+
+  // ---------- 描画 ----------
+  let showAll = false;
+  function renderDays() {
+    const keys = Object.keys(data).sort().reverse();
+    if (!keys.length) { $('days').innerHTML = '<div class="empty">まだ記録がありません</div>'; return; }
+    const list = showAll ? keys : keys.slice(0, 14);
+    const rows = list.map(k => {
+      const dt = parse(k);
+      const tag = sources[k] === 'health' ? ' <span style="color:var(--text-3);font-size:12px">ヘルスケア</span>' : '';
+      return `<tr><td>${md(dt)}（${WD[dt.getDay()]}）${tag}</td><td class="r">${fmt(data[k])} kg</td>
+        <td class="r" style="width:7.5em"><button class="del" data-k="${k}" aria-label="${md(dt)}の記録を消す">消す</button></td></tr>`;
+    }).join('');
+    $('days').innerHTML = `<table><tbody>${rows}</tbody></table>` +
+      (keys.length > 14 ? `<button class="more" id="more">${showAll ? '最近の14日だけ表示' : `すべて表示（${keys.length}日）`}</button>` : '');
+  }
+  function render() {
+    const ws = weeks(data), fc = forecast(ws);
+    renderStats($('stats'), ws, fc);
+    chart.draw(data, ws, fc);
+    renderWeeks($('weeks'), ws);
+    renderDays();
+    $('goal-out').innerHTML = goalHtml(goal, data, ws, fc, today);
+  }
+
+  // ---------- 記録 ----------
+  $('d').value = today; $('d').max = today;
+  function syncInput() { const v = data[$('d').value]; $('w').value = v != null ? fmt(v) : ''; }
+  $('d').addEventListener('change', () => { syncInput(); $('msg').textContent = ''; });
+  $('form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const v = parseFloat(String($('w').value).replace(',', '.'));
+    const day = $('d').value, msg = $('msg');
+    const bad = t => { msg.style.color = 'var(--up)'; msg.textContent = t; };
+    if (!day) return bad('日付を選んでください');
+    if (!(v >= 20 && v <= 300)) return bad('20〜300kgの数字を入れてください');
+    const kg = Math.round(v * 10) / 10;
+    const had = data[day] != null;
+    e.target.classList.add('busy');
+    const { error } = await sb.from('weights').upsert({ user_id: me.id, day, kg, source: 'manual', updated_at: new Date().toISOString() });
+    e.target.classList.remove('busy');
+    if (error) return bad('保存できませんでした。電波を確かめてもう一度押してください。');
+    data[day] = kg; sources[day] = 'manual';
+    msg.style.color = 'var(--down)';
+    msg.textContent = `${md(parse(day))} ${fmt(kg)}kg を${had ? '上書き' : '記録'}しました`;
+    $('w').blur();
+    render();
+  });
+
+  // 消す（2回押し）
+  $('days').addEventListener('click', async e => {
+    const b = e.target.closest('.del');
+    if (b) {
+      const k = b.dataset.k;
+      if (b.dataset.armed) {
+        b.classList.add('busy');
+        const { error } = await sb.from('weights').delete().eq('user_id', me.id).eq('day', k);
+        if (error) { b.classList.remove('busy'); b.textContent = '消せませんでした'; return; }
+        delete data[k]; delete sources[k]; syncInput(); render(); return;
+      }
+      document.querySelectorAll('.del[data-armed]').forEach(x => { delete x.dataset.armed; x.textContent = '消す'; x.style.color = ''; });
+      b.dataset.armed = '1'; b.textContent = 'もう一度で消す'; b.style.color = 'var(--up)';
+      return;
+    }
+    if (e.target.id === 'more') { showAll = !showAll; renderDays(); }
+  });
+
+  // ---------- 目標（入力が止まって0.6秒後に保存） ----------
+  let gt;
+  $('goal').addEventListener('submit', e => e.preventDefault());
+  $('goal').addEventListener('input', () => {
+    const num = id => { const v = parseFloat($('g-' + id).value); return Number.isFinite(v) ? v : null; };
+    goal = {
+      target_kg: num('target_kg'), target_day: $('g-target_day').value || null,
+      height_cm: num('height_cm'), age: num('age') != null ? Math.round(num('age')) : null,
+      sex: $('g-sex').value, activity: num('activity'),
+    };
+    $('goal-out').innerHTML = goalHtml(goal, data, weeks(data), forecast(weeks(data)), today);
+    clearTimeout(gt);
+    gt = setTimeout(async () => {
+      const { error } = await sb.from('goals').upsert({ user_id: me.id, ...goal, updated_at: new Date().toISOString() });
+      if (error) { $('msg').style.color = 'var(--up)'; $('msg').textContent = '目標を保存できませんでした'; }
+    }, 600);
+  });
+
+  let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { const ws = weeks(data); chart.draw(data, ws, forecast(ws)); }, 120); });
+})();
+</script>
+</body>
+</html>

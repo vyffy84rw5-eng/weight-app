@@ -1,0 +1,260 @@
+// 体重ペース 共通部品（計算・グラフ・表）。index.html と admin.html で使う。
+(() => {
+  const MIN_DAYS = 3;     // 週の平均を予測に使う最低日数
+  const FIT_WEEKS = 4;    // 予測に使う直近の週数
+  const DAY = 86400000;
+
+  // ---------- 日付・表示 ----------
+  const pad = n => String(n).padStart(2, '0');
+  const ymd = dt => `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+  const parse = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+  const md = dt => `${dt.getMonth() + 1}/${dt.getDate()}`;
+  const WD = ['日', '月', '火', '水', '木', '金', '土'];
+  function mondayOf(dt) {
+    const x = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+    x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+    return x;
+  }
+  const fmt = v => Number(v).toFixed(1);
+  const signed = v => (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v).toFixed(1);
+  const cls = v => v < 0 ? 'down' : v > 0 ? 'up' : '';
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  // ---------- 計算 ----------
+  // data: { 'YYYY-MM-DD': kg }
+  function weeks(data) {
+    const map = new Map();
+    Object.keys(data).sort().forEach(k => {
+      const mon = ymd(mondayOf(parse(k)));
+      if (!map.has(mon)) map.set(mon, []);
+      map.get(mon).push(Number(data[k]));
+    });
+    return [...map.entries()].map(([mon, vals]) => ({
+      mon, start: parse(mon), n: vals.length,
+      avg: vals.reduce((a, b) => a + b, 0) / vals.length,
+    }));
+  }
+  // 直近の「3日以上ある週」を最大4週、週番号で直線あてはめ
+  function forecast(ws) {
+    const ok = ws.filter(w => w.n >= MIN_DAYS).slice(-FIT_WEEKS);
+    if (ok.length < 2) return null;
+    const t0 = ok[0].start.getTime();
+    const xs = ok.map(w => Math.round((w.start.getTime() - t0) / (7 * DAY)));
+    const ys = ok.map(w => w.avg);
+    const mx = xs.reduce((a, b) => a + b, 0) / xs.length;
+    const my = ys.reduce((a, b) => a + b, 0) / ys.length;
+    let sxy = 0, sxx = 0;
+    xs.forEach((x, i) => { sxy += (x - mx) * (ys[i] - my); sxx += (x - mx) ** 2; });
+    const perWeek = sxx ? sxy / sxx : 0;
+    const last = ok[ok.length - 1];
+    const perMonth = perWeek * 30 / 7;
+    return { used: ok, perWeek, perMonth, from: last, in1m: last.avg + perMonth };
+  }
+
+  // ---------- 数字のカード ----------
+  function renderStats(el, ws, fc) {
+    if (!ws.length) { el.innerHTML = ''; return; }
+    const cur = ws[ws.length - 1];
+    const prev = ws.length > 1 ? ws[ws.length - 2] : null;
+    const diff = prev ? cur.avg - prev.avg : null;
+    let hero;
+    if (fc) {
+      hero = `<div class="stat hero">
+        <div class="label">1か月のペース（予測）</div>
+        <div class="value ${cls(fc.perMonth)}">${signed(fc.perMonth)}<small>kg / 月</small></div>
+        <div class="note">直近${fc.used.length}週の平均から。1週あたり ${signed(fc.perWeek)}kg</div>
+      </div>`;
+    } else {
+      const need = ws.filter(w => w.n >= MIN_DAYS).length;
+      hero = `<div class="stat hero">
+        <div class="label">1か月のペース（予測）</div>
+        <div class="value" style="color:var(--text-3)">—</div>
+        <div class="note">記録が${MIN_DAYS}日以上ある週が2つそろうと出ます（いま${need}週）</div>
+      </div>`;
+    }
+    el.innerHTML = hero + `
+      <div class="stat">
+        <div class="label">今週の平均</div>
+        <div class="value">${fmt(cur.avg)}<small>kg</small></div>
+        <div class="note">${md(cur.start)}〜　${cur.n}日分</div>
+      </div>
+      <div class="stat">
+        <div class="label">先週との差</div>
+        <div class="value ${diff == null ? '' : cls(diff)}">${diff == null ? '—' : signed(diff)}<small>${diff == null ? '' : 'kg'}</small></div>
+        <div class="note">${prev ? `先週 ${fmt(prev.avg)}kg` : '先週の記録なし'}</div>
+      </div>
+      ${fc ? `<div class="stat hero">
+        <div class="label">1か月後の予測</div>
+        <div class="value">${fmt(fc.in1m)}<small>kg</small></div>
+        <div class="note">このペースが続いた場合の週の平均</div>
+      </div>` : ''}`;
+  }
+
+  // ---------- グラフ ----------
+  const NS = 'http://www.w3.org/2000/svg';
+  const mk = (tag, attrs) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+  function niceStep(raw) {
+    const p = Math.pow(10, Math.floor(Math.log10(raw)));
+    const f = raw / p;
+    return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
+  }
+
+  // 1つのグラフ部品を作る。els = { svg, tip, legend }
+  function createChart(els) {
+    let hits = [];
+    function draw(data, ws, fc) {
+      const svg = els.svg;
+      svg.innerHTML = '';
+      hits = [];
+      const keys = Object.keys(data).sort();
+      const emptyId = svg.id + '-empty';
+      if (!keys.length) {
+        svg.hidden = true; if (els.legend) els.legend.hidden = true;
+        if (!document.getElementById(emptyId)) { const p = document.createElement('div'); p.id = emptyId; p.className = 'empty'; p.textContent = '記録するとグラフが出ます'; svg.after(p); }
+        return;
+      }
+      svg.hidden = false; if (els.legend) els.legend.hidden = false;
+      const em = document.getElementById(emptyId); if (em) em.remove();
+
+      const W = svg.clientWidth || 340, H = 240;
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      const L = 40, R = 12, T = 14, B = 26;
+
+      const first = ws[0].start.getTime();
+      const lastWeek = ws[ws.length - 1].start.getTime();
+      const fcEnd = fc ? fc.from.start.getTime() + 30 * DAY + 3.5 * DAY : 0;
+      const x0 = first, x1 = Math.max(lastWeek + 7 * DAY, fcEnd);
+      const centerOf = w => w.start.getTime() + 3.5 * DAY; // 週の真ん中（木曜）に置く
+
+      const vals = keys.map(k => Number(data[k])).concat(ws.map(w => w.avg));
+      if (fc) vals.push(fc.in1m);
+      let lo = Math.min(...vals), hi = Math.max(...vals);
+      const span = Math.max(hi - lo, 2);
+      const mid = (lo + hi) / 2;
+      lo = mid - span / 2 - span * 0.1; hi = mid + span / 2 + span * 0.1;
+      const step = niceStep((hi - lo) / 4);
+      lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+
+      const X = t => L + (t - x0) / (x1 - x0) * (W - L - R);
+      const Y = v => T + (hi - v) / (hi - lo) * (H - T - B);
+
+      const g = mk('g', {});
+      for (let v = lo; v <= hi + 1e-9; v += step) {
+        g.append(mk('line', { x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: 'var(--grid)', 'stroke-width': 1 }));
+        const t = mk('text', { x: L - 6, y: Y(v) + 4, 'text-anchor': 'end' }); t.textContent = step < 1 ? v.toFixed(1) : v.toFixed(0); g.append(t);
+      }
+      const allWeeks = [];
+      for (let t = x0; t < x1; t += 7 * DAY) allWeeks.push(t);
+      const every = Math.max(1, Math.ceil(allWeeks.length / Math.max(2, Math.floor((W - L - R) / 56))));
+      allWeeks.forEach((t, i) => {
+        if (i % every) return;
+        const tx = mk('text', { x: X(t + 3.5 * DAY), y: H - 8, 'text-anchor': 'middle' }); tx.textContent = md(new Date(t)) + '週'; g.append(tx);
+      });
+      svg.append(g);
+
+      keys.forEach(k => {
+        const t = parse(k).getTime() + DAY / 2;
+        svg.append(mk('circle', { cx: X(t), cy: Y(Number(data[k])), r: 2.5, fill: 'var(--dot)' }));
+      });
+
+      if (fc) {
+        const sx = X(centerOf(fc.from)), sy = Y(fc.from.avg);
+        const ex = X(centerOf(fc.from) + 30 * DAY), ey = Y(fc.in1m);
+        svg.append(mk('line', { x1: sx, y1: sy, x2: ex, y2: ey, stroke: 'var(--accent)', 'stroke-width': 2, 'stroke-dasharray': '5 5', opacity: .7, 'stroke-linecap': 'round' }));
+        svg.append(mk('circle', { cx: ex, cy: ey, r: 4, fill: 'var(--card)', stroke: 'var(--accent)', 'stroke-width': 2 }));
+        const lb = mk('text', { x: Math.min(ex, W - R), y: ey - 10, 'text-anchor': 'end', style: 'fill:var(--text-2);font-weight:600' });
+        lb.textContent = `1か月後 ${fmt(fc.in1m)}`;
+        svg.append(lb);
+        hits.push({ x: ex, y: ey, html: `1か月後の予測<br><b>${fmt(fc.in1m)} kg</b>` });
+      }
+
+      const pts = ws.map(w => [X(centerOf(w)), Y(w.avg), w]);
+      if (pts.length > 1) {
+        svg.append(mk('path', { d: pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' '), fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+      }
+      pts.forEach(([x, y, w]) => {
+        const thin = w.n < MIN_DAYS;
+        svg.append(mk('circle', { cx: x, cy: y, r: 4.5, fill: thin ? 'var(--card)' : 'var(--accent)', stroke: thin ? 'var(--accent)' : 'var(--card)', 'stroke-width': 2 }));
+        hits.push({ x, y, html: `${md(w.start)}〜の週（${w.n}日）<br><b>平均 ${fmt(w.avg)} kg</b>${thin ? '<br>日数が少なく予測には未使用' : ''}` });
+      });
+      const lp = pts[pts.length - 1];
+      if (lp && !fc) {
+        const t = mk('text', { x: lp[0], y: lp[1] - 10, 'text-anchor': 'middle', style: 'fill:var(--text-2);font-weight:600' }); t.textContent = fmt(lp[2].avg); svg.append(t);
+      }
+    }
+    function showTip(ev) {
+      if (!hits.length) return;
+      const svg = els.svg, r = svg.getBoundingClientRect();
+      const vb = svg.viewBox.baseVal, sc = r.width / vb.width;
+      const px = (ev.touches ? ev.touches[0].clientX : ev.clientX) - r.left;
+      let best = null, bd = Infinity;
+      hits.forEach(h => { const d = Math.abs(h.x * sc - px); if (d < bd) { bd = d; best = h; } });
+      const tip = els.tip;
+      if (!best || bd > 40) { tip.style.opacity = 0; return; }
+      tip.innerHTML = best.html;
+      const half = tip.offsetWidth / 2;
+      tip.style.left = Math.min(Math.max(best.x * sc, half), r.width - half) + 'px';
+      tip.style.top = (best.y * sc - 10) + 'px';
+      tip.style.opacity = 1;
+    }
+    els.svg.addEventListener('pointermove', showTip);
+    els.svg.addEventListener('pointerdown', showTip);
+    els.svg.addEventListener('pointerleave', () => { els.tip.style.opacity = 0; });
+    return { draw };
+  }
+
+  // ---------- 週の表 ----------
+  function renderWeeks(el, ws) {
+    if (!ws.length) { el.innerHTML = '<div class="empty">まだ記録がありません</div>'; return; }
+    const rows = ws.slice().reverse().map((w, i, arr) => {
+      const prev = arr[i + 1];
+      const d = prev ? w.avg - prev.avg : null;
+      return `<tr><td>${md(w.start)}〜</td><td class="r muted">${w.n}日</td><td class="r">${fmt(w.avg)}</td>
+        <td class="r ${d == null ? 'muted' : cls(d)}">${d == null ? '—' : signed(d)}</td></tr>`;
+    }).join('');
+    el.innerHTML = `<table><thead><tr><th>週</th><th class="r">日数</th><th class="r">平均kg</th><th class="r">前週比</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  // ---------- 目標ペース ----------
+  // goal = { target_kg, target_day, height_cm, age, sex, activity }
+  function goalHtml(goal, data, ws, fc, todayStr) {
+    const keys = Object.keys(data).sort();
+    if (!keys.length) return '<div class="line">体重を記録すると計算します。</div>';
+    const now = ws.length ? ws[ws.length - 1].avg : Number(data[keys[keys.length - 1]]);
+    const target = parseFloat(goal.target_kg), until = goal.target_day;
+    if (!(target >= 20) || !until) return `<div class="line">目標の体重と日付を入れると、必要なペースを出します。<br>今の体重（今週の平均）: <b>${fmt(now)} kg</b></div>`;
+    const days = Math.round((parse(until) - parse(todayStr)) / DAY);
+    if (days < 7) return '<div class="line">日付は1週間以上先にしてください。</div>';
+    const total = target - now;
+    const perMonth = total / days * 30;
+    const perWeek = total / days * 7;
+    const pctWeek = Math.abs(perWeek) / now * 100;
+    const kcalDay = Math.abs(total) * 7200 / days;
+
+    let html = `<div class="label" style="font-size:12px;color:var(--text-2)">今月がんばるペース</div>
+      <div class="big ${perMonth < 0 ? 'down' : 'up'}">${signed(perMonth)}<small>kg / 月</small></div>
+      <div class="line">${fmt(now)}kg → ${fmt(target)}kg（${signed(total)}kg）を ${days}日で。1週あたり <b>${signed(perWeek)}kg</b></div>`;
+    const h = parseFloat(goal.height_cm), a = parseFloat(goal.age);
+    if (h > 0 && a > 0) {
+      const bmr = 10 * now + 6.25 * h - 5 * a + (goal.sex === 'f' ? -161 : 5);
+      const tdee = bmr * (parseFloat(goal.activity) || 1.55);
+      const eat = total < 0 ? tdee - kcalDay : tdee + kcalDay;
+      html += `<div class="line">1日に使う量の目安 <b>${Math.round(tdee).toLocaleString()}kcal</b>。そのために1日 <b>${Math.round(kcalDay).toLocaleString()}kcal</b> ${total < 0 ? '減らす' : '増やす'} → 食べる量は <b>${Math.round(eat).toLocaleString()}kcal</b> くらい</div>`;
+    } else {
+      html += '<div class="line">身長と年齢を入れると、1日に食べる量の目安も出します。</div>';
+    }
+    if (fc) {
+      const gap = fc.perMonth - perMonth;
+      const onTrack = total < 0 ? fc.perMonth <= perMonth : fc.perMonth >= perMonth;
+      html += `<div class="line">いまの実績ペースは <b>${signed(fc.perMonth)}kg/月</b>。${onTrack ? '目標に間に合うペースです。' : `あと <b>${Math.abs(gap).toFixed(1)}kg/月</b> ${total < 0 ? '多く落とす' : '多く増やす'}必要があります。`}</div>`;
+    }
+    if (total < 0) {
+      html += pctWeek <= 1
+        ? `<span class="badge ok">無理のないペース（1週に体重の${pctWeek.toFixed(1)}%）</span>`
+        : `<span class="badge warn">速すぎるペース（1週に体重の${pctWeek.toFixed(1)}%）。日付を先にのばすのがおすすめ</span>`;
+    }
+    return html;
+  }
+
+  window.WP = { MIN_DAYS, DAY, ymd, parse, md, WD, fmt, signed, cls, esc, weeks, forecast, renderStats, createChart, renderWeeks, goalHtml };
+})();
