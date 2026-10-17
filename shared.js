@@ -256,5 +256,78 @@
     return html;
   }
 
-  window.WP = { MIN_DAYS, DAY, ymd, parse, md, WD, fmt, signed, cls, esc, weeks, forecast, renderStats, createChart, renderWeeks, goalHtml };
+
+  // ---------- 1日の目安kcal（Mifflin-St Jeor × 運動の習慣） ----------
+  function tdeeOf(goal, nowKg) {
+    const h = parseFloat(goal.height_cm), a = parseFloat(goal.age);
+    if (!(h > 0 && a > 0 && nowKg > 0)) return null;
+    const bmr = 10 * nowKg + 6.25 * h - 5 * a + (goal.sex === 'f' ? -161 : 5);
+    return bmr * (parseFloat(goal.activity) || 1.55);
+  }
+  // 目標に向けた1日の食事の目安（減量なら目安から不足分を引く）
+  function kcalPlan(goal, nowKg, todayStr) {
+    const tdee = tdeeOf(goal, nowKg);
+    if (tdee == null) return null;
+    const target = parseFloat(goal.target_kg), until = goal.target_day;
+    let eat = tdee, diffDay = 0;
+    if (target >= 20 && until) {
+      const days = Math.round((parse(until) - parse(todayStr)) / DAY);
+      if (days >= 7) { diffDay = (target - nowKg) * 7200 / days; eat = tdee + diffDay; }
+    }
+    return { tdee, eat, diffDay };
+  }
+
+  // ---------- 判定（順調／やや遅れ／要フォロー） ----------
+  // 返す: { level: 'ok'|'slow'|'follow'|'wait'|'none', label, why, need, actual, monthEnd, waitDays }
+  function judge(goal, data, todayStr) {
+    const keys = Object.keys(data).sort();
+    const ws = weeks(data), fc = forecast(ws);
+    const out = { ws, fc, level: 'none', label: '', why: '' };
+    if (!keys.length) return { ...out, level: 'follow', label: '要フォロー', why: 'まだ記録がありません' };
+    const lastDay = keys[keys.length - 1];
+    const gapDays = Math.round((parse(todayStr) - parse(lastDay)) / DAY);
+    out.gapDays = gapDays;
+    const now = ws[ws.length - 1].avg;
+    out.now = now;
+
+    // 目標まで
+    const target = parseFloat(goal?.target_kg), until = goal?.target_day;
+    if (target >= 20 && until) {
+      const days = Math.round((parse(until) - parse(todayStr)) / DAY);
+      out.remainKg = target - now; out.remainDays = days;
+      if (days > 0) out.need = (target - now) / days * 30;
+    }
+    // 今月末の予想（今の週ペースのまま）
+    if (fc) {
+      const t = parse(todayStr);
+      const monthEnd = new Date(t.getFullYear(), t.getMonth() + 1, 0);
+      const daysLeft = Math.round((monthEnd - t) / DAY);
+      out.monthEnd = { date: monthEnd, kg: now + fc.perWeek * daysLeft / 7 };
+      out.actual = fc.perMonth;
+    }
+
+    if (gapDays > 7) return { ...out, level: 'follow', label: '要フォロー', why: `${gapDays}日間記録がありません` };
+    if (!fc) {
+      // 1日1回記録したとして、何日でペースが出るか数える
+      const sim = { ...data };
+      let n = 0;
+      while (n < 21 && !forecast(weeks(sim))) { n++; const x = parse(todayStr); x.setDate(x.getDate() + n); sim[ymd(x)] = now; }
+      return { ...out, level: 'wait', label: '判定まち', why: `判定にはあと${n}日（毎日記録した場合）`, waitDays: n };
+    }
+    // 減り方が速すぎる（1週に体重の1%超）は、目標の有無にかかわらず声かけ
+    const pctWeek = -fc.perWeek / now * 100;
+    if (pctWeek > 1) return { ...out, level: 'follow', label: '要フォロー', why: `減り方が速すぎます（1週に体重の${pctWeek.toFixed(1)}%）` };
+    if (out.need == null) return { ...out, level: 'none', label: '目標なし', why: '目標を入れると判定します' };
+    if (out.remainDays <= 0) return { ...out, level: Math.abs(out.remainKg) <= 0.5 ? 'ok' : 'follow', label: Math.abs(out.remainKg) <= 0.5 ? '順調' : '要フォロー', why: '目標の日を過ぎています' };
+    const losing = out.remainKg < 0;
+    if (Math.abs(out.remainKg) <= 0.3) return { ...out, level: 'ok', label: '順調', why: '目標の体重に届いています' };
+    // 必要なペースに対して、実際のペースが何割出ているか
+    const ratio = out.actual / out.need;    // 減量: どちらもマイナスなので正の比になる
+    if (ratio >= 1) return { ...out, level: 'ok', label: '順調', why: '目標に間に合うペースです' };
+    if (ratio >= 0.5) return { ...out, level: 'slow', label: 'やや遅れ', why: `必要なペースの${Math.round(ratio * 100)}%です` };
+    return { ...out, level: 'follow', label: '要フォロー', why: ratio <= 0 ? (losing ? '体重が増えるペースです' : '体重が減るペースです') : `必要なペースの${Math.round(ratio * 100)}%です` };
+  }
+  const badge = j => `<span class="status s-${j.level}">${j.label}</span>`;
+
+  window.WP = { MIN_DAYS, DAY, ymd, parse, md, WD, fmt, signed, cls, esc, weeks, forecast, renderStats, createChart, renderWeeks, goalHtml, tdeeOf, kcalPlan, judge, badge };
 })();

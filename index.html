@@ -85,6 +85,22 @@
         </select></label>
       </form>
       <div class="goal-out" id="goal-out"></div>
+      <div class="coach-kcal" id="coach-kcal" hidden></div>
+    </section>
+
+    <section class="card" id="ex-card">
+      <h2>運動の記録</h2>
+      <form class="ex-form" id="ex-form" autocomplete="off">
+        <label>日付<input id="ex-day" type="date"></label>
+        <label>種類<select id="ex-kind">
+          <option>筋トレ</option><option>有酸素</option><option>ウォーキング</option><option>ストレッチ</option><option>その他</option>
+        </select></label>
+        <label>時間（分）<input id="ex-min" type="number" inputmode="numeric" min="1" max="600" step="1" placeholder="30"></label>
+        <label>メモ（なくてもよい）<input id="ex-memo" type="text" maxlength="200" placeholder="脚の日 など"></label>
+        <button class="primary" type="submit">運動を記録</button>
+      </form>
+      <div class="msg" id="ex-msg" role="status"></div>
+      <div id="ex-list"></div>
     </section>
 
     <section class="card">
@@ -100,6 +116,13 @@
     <section class="card">
       <h2>アカウント</h2>
       <div class="kv">ログイン中: <span id="me-email"></span></div>
+      <form id="pw-form" class="ex-form" style="margin-top:12px" autocomplete="on">
+        <input type="email" autocomplete="username" id="pw-user" hidden>
+        <label class="full">新しいパスワード（8文字以上）<input id="pw1" type="password" autocomplete="new-password" minlength="8"></label>
+        <label class="full">もう一度<input id="pw2" type="password" autocomplete="new-password" minlength="8"></label>
+        <button class="primary" type="submit">パスワードを変える</button>
+      </form>
+      <div class="msg" id="pw-msg" role="status"></div>
       <div style="margin-top:10px"><button class="small-btn" type="button" id="logout">ログアウト</button></div>
     </section>
 
@@ -120,6 +143,8 @@
   let data = {};        // { day: kg }
   let sources = {};     // { day: 'manual' | 'health' }
   let goal = {};
+  let exercises = [];  // null = 表がまだ無い
+  let coachKcal = null;
   const chart = createChart({ svg: $('chart'), tip: $('tip'), legend: $('legend') });
 
   // ---------- ログイン（メール＋パスワード） ----------
@@ -174,11 +199,16 @@
     $('view-login').hidden = true; $('view-app').hidden = false;
     $('me-email').textContent = me.email || '';
     $('msg').textContent = '読み込み中…'; $('msg').style.color = 'var(--text-3)';
-    const [w, g, p] = await Promise.all([
+    const [w, g, p, ex, co] = await Promise.all([
       sb.from('weights').select('day,kg,source').eq('user_id', me.id).order('day'),
       sb.from('goals').select('*').eq('user_id', me.id).maybeSingle(),
       sb.from('profiles').select('is_admin').eq('id', me.id).maybeSingle(),
+      sb.from('exercises').select('id,day,kind,minutes,memo').eq('user_id', me.id).order('day', { ascending: false }).order('id', { ascending: false }).limit(200),
+      sb.from('coach_settings').select('kcal_target').eq('user_id', me.id).maybeSingle(),
     ]);
+    exercises = ex.error ? null : (ex.data || []);
+    coachKcal = co.error ? null : (co.data?.kcal_target || null);
+    $('pw-user').value = me.email || '';
     if (w.error) { $('msg').style.color = 'var(--up)'; $('msg').textContent = '記録を読み込めませんでした。電波を確かめて開き直してください。'; return; }
     data = {}; sources = {};
     (w.data || []).forEach(r => { data[r.day] = Number(r.kg); sources[r.day] = r.source; });
@@ -214,6 +244,8 @@
     renderWeeks($('weeks'), ws);
     renderDays();
     $('goal-out').innerHTML = goalHtml(goal, data, ws, fc, today);
+    renderCoach();
+    renderEx();
   }
 
   // ---------- 記録 ----------
@@ -256,6 +288,70 @@
       return;
     }
     if (e.target.id === 'more') { showAll = !showAll; renderDays(); }
+  });
+
+
+  // ---------- トレーナーが決めたカロリー ----------
+  function renderCoach() {
+    const el = $('coach-kcal');
+    el.hidden = !coachKcal;
+    if (coachKcal) el.innerHTML = `トレーナーの設定: 1日 <b>${coachKcal.toLocaleString()}kcal</b> を目安に食べましょう`;
+  }
+
+  // ---------- 運動 ----------
+  $('ex-day').value = today; $('ex-day').max = today;
+  function renderEx() {
+    $('ex-card').hidden = exercises === null;
+    if (!exercises) return;
+    if (!exercises.length) { $('ex-list').innerHTML = '<div class="empty" style="padding:16px 0">まだ運動の記録がありません</div>'; return; }
+    const rows = exercises.slice(0, 10).map(x => { const dt = parse(x.day);
+      return `<tr><td style="width:6.5em">${md(dt)}（${WD[dt.getDay()]}）</td><td>${WP.esc(x.kind)}${x.memo ? `<div style="color:var(--text-3);font-size:13px">${WP.esc(x.memo)}</div>` : ''}</td><td class="r" style="width:4em">${x.minutes}分</td>
+        <td class="r" style="width:7.5em"><button class="del" data-ex="${x.id}" aria-label="${md(dt)}の運動を消す">消す</button></td></tr>`; }).join('');
+    $('ex-list').innerHTML = `<table style="margin-top:12px"><tbody>${rows}</tbody></table>`;
+  }
+  $('ex-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const m = $('ex-msg'); const bad = t => { m.style.color = 'var(--up)'; m.textContent = t; };
+    const day = $('ex-day').value, kind = $('ex-kind').value, minutes = Math.round(parseFloat($('ex-min').value)), memo = $('ex-memo').value.trim() || null;
+    if (!day) return bad('日付を選んでください');
+    if (!(minutes >= 1 && minutes <= 600)) return bad('時間は1〜600分で入れてください');
+    e.target.classList.add('busy');
+    const { data: row, error } = await sb.from('exercises').insert({ user_id: me.id, day, kind, minutes, memo }).select('id,day,kind,minutes,memo').single();
+    e.target.classList.remove('busy');
+    if (error) return bad('保存できませんでした。電波を確かめてもう一度押してください。');
+    exercises.unshift(row); exercises.sort((a, b) => b.day.localeCompare(a.day) || b.id - a.id);
+    m.style.color = 'var(--down)'; m.textContent = `${md(parse(day))} ${kind} ${minutes}分 を記録しました`;
+    $('ex-min').value = ''; $('ex-memo').value = '';
+    renderEx();
+  });
+  $('ex-list').addEventListener('click', async e => {
+    const b = e.target.closest('.del'); if (!b) return;
+    if (b.dataset.armed) {
+      b.classList.add('busy');
+      const { error } = await sb.from('exercises').delete().eq('id', b.dataset.ex).eq('user_id', me.id);
+      if (error) { b.classList.remove('busy'); b.textContent = '消せませんでした'; return; }
+      exercises = exercises.filter(x => String(x.id) !== b.dataset.ex); renderEx(); return;
+    }
+    $('ex-list').querySelectorAll('.del[data-armed]').forEach(x => { delete x.dataset.armed; x.textContent = '消す'; x.style.color = ''; });
+    b.dataset.armed = '1'; b.textContent = 'もう一度で消す'; b.style.color = 'var(--up)';
+  });
+
+  // ---------- パスワードを変える ----------
+  $('pw-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const m = $('pw-msg'); const bad = t => { m.style.color = 'var(--up)'; m.textContent = t; };
+    const a = $('pw1').value, b = $('pw2').value;
+    if (a.length < 8) return bad('8文字以上にしてください');
+    if (a !== b) return bad('2回入れたパスワードが違います');
+    e.target.classList.add('busy');
+    const { error } = await sb.auth.updateUser({ password: a });
+    e.target.classList.remove('busy');
+    if (error) {
+      const t = String(error.message || '');
+      return bad(/different from the old/i.test(t) ? '今と同じパスワードです。別のものにしてください。' : /weak|pwned|leaked/i.test(t) ? '漏れたことのあるパスワードです。別のものにしてください。' : '変えられませんでした: ' + t);
+    }
+    $('pw1').value = ''; $('pw2').value = '';
+    m.style.color = 'var(--down)'; m.textContent = 'パスワードを変えました。次からは新しいパスワードでログインします。';
   });
 
   // ---------- 目標（入力が止まって0.6秒後に保存） ----------

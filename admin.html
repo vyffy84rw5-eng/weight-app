@@ -13,14 +13,14 @@
     <h1>管理</h1>
     <div class="links"><a href="./">自分の記録</a></div>
   </div>
-  <p class="sub" id="sub">使っている人の一覧</p>
+  <p class="sub" id="sub">お客様の一覧</p>
   <div class="msg" id="msg" role="status"></div>
 
   <!-- 一覧 -->
   <section id="view-list" hidden>
     <div class="stats" id="summary"></div>
     <section class="card">
-      <h2>使っている人（最後に記録した日が新しい順）</h2>
+      <h2>お客様（要フォローの人から順に）</h2>
       <div id="members"></div>
     </section>
   </section>
@@ -30,7 +30,13 @@
     <button class="back" type="button" id="back">一覧にもどる</button>
     <h2 id="one-name" style="font-size:22px;margin:8px 4px 2px"></h2>
     <p class="sub" id="one-meta"></p>
-    <section class="stats" id="one-stats"></section>
+
+    <section class="card step"><span class="no">1</span><div><h2>目標</h2><div class="row2" id="s-goal"></div></div></section>
+    <section class="card step"><span class="no">2</span><div><h2>今週の平均</h2><div class="row2" id="s-week"></div></div></section>
+    <section class="card step"><span class="no">3</span><div><h2>先週との差</h2><div class="row2" id="s-diff"></div></div></section>
+    <section class="card step"><span class="no">4</span><div><h2>ペース</h2><div class="row2" id="s-pace"></div></div></section>
+    <section class="card step"><span class="no">5</span><div><h2>今の状況</h2><div class="judge-big" id="s-judge"></div></div></section>
+
     <section class="card">
       <h2>週の平均の推移</h2>
       <div class="chart-wrap">
@@ -43,10 +49,22 @@
         <span><i class="sw-dot"></i>毎日の記録</span>
       </div>
     </section>
-    <section class="card">
-      <h2>目標ペース</h2>
-      <div class="goal-out" id="one-goal" style="margin-top:0;border-top:0;padding-top:0"></div>
+
+    <button class="toggle" type="button" id="t-ex" aria-expanded="false" aria-controls="p-ex"><span>運動の記録</span><span id="t-ex-sum"></span></button>
+    <section class="card" id="p-ex" hidden></section>
+
+    <button class="toggle" type="button" id="t-kcal" aria-expanded="false" aria-controls="p-kcal"><span>カロリーの設定</span><span id="t-kcal-sum"></span></button>
+    <section class="card" id="p-kcal" hidden>
+      <div id="kcal-body"></div>
+      <form class="inline-form" id="kcal-form" autocomplete="off">
+        <input id="kcal-in" type="number" inputmode="numeric" min="800" max="6000" step="10" placeholder="例 1800" aria-label="設定kcal">
+        <span style="color:var(--text-2);font-size:14px">kcal/日</span>
+        <button class="small-btn" type="submit">設定する</button>
+        <button class="small-btn" type="button" id="kcal-clear" style="background:none;color:var(--text-2)">解除</button>
+      </form>
+      <div class="msg" id="kcal-msg" role="status"></div>
     </section>
+
     <section class="card">
       <h2>週ごとの平均</h2>
       <div id="one-weeks"></div>
@@ -59,7 +77,7 @@
 <script src="shared.js"></script>
 <script>
 (async () => {
-  const { ymd, parse, md, fmt, signed, cls, esc, weeks, forecast, renderStats, createChart, renderWeeks, goalHtml, DAY } = WP;
+  const { ymd, parse, md, WD, fmt, signed, cls, esc, createChart, renderWeeks, kcalPlan, judge, badge, DAY } = WP;
   const sb = supabase.createClient(WP_CONFIG.url, WP_CONFIG.key, { auth: { persistSession: true, autoRefreshToken: true } });
   const $ = id => document.getElementById(id);
   const today = ymd(new Date());
@@ -74,59 +92,155 @@
 
   // 全員分をまとめて読む（RLSで管理者だけ全件が返る）
   msg('読み込み中…');
-  const [pr, wr, gr] = await Promise.all([
-    sb.from('profiles').select('id,email,display_name,created_at'),
+  const [pr, wr, gr, er, cr] = await Promise.all([
+    sb.from('profiles').select('id,email,display_name,is_admin,created_at'),
     sb.from('weights').select('user_id,day,kg,source').order('day').limit(100000),
     sb.from('goals').select('*'),
+    sb.from('exercises').select('user_id,day,kind,minutes,memo').order('day', { ascending: false }).limit(100000),
+    sb.from('coach_settings').select('user_id,kcal_target'),
   ]);
-  if (pr.error || wr.error || gr.error) { msg('読み込めませんでした: ' + (pr.error || wr.error || gr.error).message, true); return; }
+  const firstErr = [pr, wr, gr].find(r => r.error);
+  if (firstErr) { msg('読み込めませんでした: ' + firstErr.error.message, true); return; }
+  // 運動とカロリー設定は、表がまだ無くても他は見られるようにする
+  const exOk = !er.error, coachOk = !cr.error;
   msg('');
 
   const byUser = new Map();
-  pr.data.forEach(u => byUser.set(u.id, { ...u, data: {}, goal: {} }));
+  pr.data.forEach(u => byUser.set(u.id, { ...u, data: {}, goal: {}, ex: [], kcal: null }));
   wr.data.forEach(r => { const u = byUser.get(r.user_id); if (u) u.data[r.day] = Number(r.kg); });
   gr.data.forEach(g => { const u = byUser.get(g.user_id); if (u) u.goal = g; });
+  if (exOk) er.data.forEach(x => { const u = byUser.get(x.user_id); if (u) u.ex.push(x); });
+  if (coachOk) cr.data.forEach(c => { const u = byUser.get(c.user_id); if (u) u.kcal = c.kcal_target; });
 
-  const people = [...byUser.values()].map(u => {
-    const keys = Object.keys(u.data).sort();
-    const ws = weeks(u.data);
-    return { ...u, last: keys[keys.length - 1] || null, days: keys.length, ws, fc: forecast(ws) };
-  }).sort((a, b) => (b.last || '').localeCompare(a.last || ''));
+  const ORDER = { follow: 0, slow: 1, wait: 2, none: 3, ok: 4 };
+  const people = [...byUser.values()]
+    .filter(u => !u.is_admin || Object.keys(u.data).length)   // 記録のない管理者は一覧に出さない
+    .map(u => {
+      const keys = Object.keys(u.data).sort();
+      return { ...u, last: keys[keys.length - 1] || null, days: keys.length, j: judge(u.goal, u.data, today) };
+    })
+    .sort((a, b) => (ORDER[a.j.level] - ORDER[b.j.level]) || (b.last || '').localeCompare(a.last || ''));
 
   const nameOf = u => u.display_name || u.email || '名前なし';
   const daysAgo = d => d ? Math.round((parse(today) - parse(d)) / DAY) : null;
 
+  // ---------- 一覧 ----------
   function renderList() {
-    $('view-one').hidden = true; $('view-list').hidden = false;
-    const active = people.filter(u => daysAgo(u.last) != null && daysAgo(u.last) <= 3).length;
+    $('view-one').hidden = true; $('view-list').hidden = false; $('sub').textContent = 'お客様の一覧';
+    const count = lv => people.filter(u => u.j.level === lv).length;
     $('summary').innerHTML = `
-      <div class="stat"><div class="label">登録している人</div><div class="value">${people.length}<small>人</small></div></div>
-      <div class="stat"><div class="label">3日以内に記録</div><div class="value">${active}<small>人</small></div></div>`;
+      <div class="stat"><div class="label">お客様</div><div class="value">${people.length}<small>人</small></div></div>
+      <div class="stat"><div class="label">要フォロー</div><div class="value ${count('follow') ? 'up' : ''}">${count('follow')}<small>人</small></div><div class="note">やや遅れ ${count('slow')}人・順調 ${count('ok')}人</div></div>`;
     if (!people.length) { $('members').innerHTML = '<div class="empty">まだ誰も登録していません</div>'; return; }
     $('members').innerHTML = people.map(u => {
       const ago = daysAgo(u.last);
-      const cur = u.ws[u.ws.length - 1];
+      const cur = u.j.ws[u.j.ws.length - 1];
       const lastTxt = ago == null ? '記録なし' : ago === 0 ? '今日記録' : `${ago}日前に記録`;
       return `<div class="member" data-id="${esc(u.id)}" role="button" tabindex="0">
-        <div class="name">${esc(nameOf(u))}</div>
+        <div class="name-row"><span class="name">${esc(nameOf(u))}</span>${badge(u.j)}</div>
         <div class="val">${cur ? fmt(cur.avg) + ' kg' : '—'}</div>
-        <div class="meta ${ago != null && ago > 3 ? 'stale' : ''}">${lastTxt}・${u.days}日分</div>
-        <div class="pace ${u.fc ? cls(u.fc.perMonth) : ''}">${u.fc ? signed(u.fc.perMonth) + 'kg/月' : 'ペース未算出'}</div>
+        <div class="meta ${ago == null || ago > 7 ? 'stale' : ''}">${lastTxt}・${u.days}日分</div>
+        <div class="pace ${u.j.fc ? cls(u.j.fc.perMonth) : ''}">${u.j.fc ? signed(u.j.fc.perMonth) + 'kg/月' : 'ペース未算出'}</div>
       </div>`;
     }).join('');
   }
+
+  // ---------- 1人の画面 ----------
+  let cur = null;
+  const cell = (label, value, note, extra = '') => `<div><div class="label">${label}</div><div class="value ${extra}">${value}</div>${note ? `<div class="note">${note}</div>` : ''}</div>`;
   function renderOne(id) {
     const u = people.find(x => x.id === id);
     if (!u) return renderList();
-    $('view-list').hidden = true; $('view-one').hidden = false;
+    cur = u;
+    const j = u.j, ws = j.ws, fc = j.fc;
+    $('view-list').hidden = true; $('view-one').hidden = false; $('sub').textContent = '';
     $('one-name').textContent = nameOf(u);
-    $('one-meta').textContent = `${u.email || ''}　登録 ${md(new Date(u.created_at))}　記録 ${u.days}日分`;
-    renderStats($('one-stats'), u.ws, u.fc);
-    chart.draw(u.data, u.ws, u.fc);
-    $('one-goal').innerHTML = goalHtml(u.goal || {}, u.data, u.ws, u.fc, today);
-    renderWeeks($('one-weeks'), u.ws);
+    $('one-meta').innerHTML = `${esc(u.email || '')}<br>登録 ${md(new Date(u.created_at))}・記録 ${u.days}日分${u.last ? `・最後 ${md(parse(u.last))}` : ''}`;
+
+    // 1. 目標
+    const g = u.goal || {};
+    if (g.target_kg && g.target_day) {
+      const remain = j.remainKg, days = j.remainDays;
+      $('s-goal').innerHTML =
+        cell('目標', `${fmt(g.target_kg)}<small>kg</small>`, `${parse(g.target_day).getFullYear()}/${md(parse(g.target_day))}まで（あと${Math.max(days, 0)}日）`) +
+        cell('あと', remain == null ? '—' : `${signed(remain)}<small>kg</small>`, j.now ? `今 ${fmt(j.now)}kg` : '', remain == null ? '' : cls(remain));
+    } else {
+      $('s-goal').innerHTML = `<div style="grid-column:1/-1;color:var(--text-2);font-size:14px">目標がまだ入っていません</div>`;
+    }
+    // 2. 今週の平均
+    const w0 = ws[ws.length - 1], w1 = ws.length > 1 ? ws[ws.length - 2] : null;
+    $('s-week').innerHTML = w0
+      ? cell('今週の平均', `${fmt(w0.avg)}<small>kg</small>`, `${md(w0.start)}〜　${w0.n}日分`) + cell('先週の平均', w1 ? `${fmt(w1.avg)}<small>kg</small>` : '—', w1 ? `${md(w1.start)}〜　${w1.n}日分` : '記録なし')
+      : '<div style="grid-column:1/-1;color:var(--text-2);font-size:14px">記録がありません</div>';
+    // 3. 先週との差
+    const diff = w0 && w1 ? w0.avg - w1.avg : null;
+    $('s-diff').innerHTML = cell('週の平均どうし', diff == null ? '—' : `${signed(diff)}<small>kg</small>`, diff == null ? '先週の記録がありません' : '', diff == null ? '' : cls(diff)) +
+      cell('1か月にすると', diff == null ? '—' : `${signed(diff * 30 / 7)}<small>kg</small>`, diff == null ? '' : 'この1週の差が続いた場合', diff == null ? '' : cls(diff));
+    // 4. ペース
+    $('s-pace').innerHTML = fc
+      ? cell('今週のペース', `${signed(fc.perWeek)}<small>kg/週</small>`, `直近${fc.used.length}週から`, cls(fc.perWeek)) +
+        cell('今月のペース', `${signed(fc.perMonth)}<small>kg/月</small>`, '', cls(fc.perMonth)) +
+        cell(`今月末（${md(j.monthEnd.date)}）の予想`, `${fmt(j.monthEnd.kg)}<small>kg</small>`, '今のペースのまま') +
+        cell('目標に必要な月ペース', j.need == null ? '—' : `${signed(j.need)}<small>kg/月</small>`, j.need == null ? '目標なし' : '')
+      : cell('今月のペース', '—', j.why) + cell('目標に必要な月ペース', j.need == null ? '—' : `${signed(j.need)}<small>kg/月</small>`, j.need == null ? '目標なし' : '');
+    // 5. 判定
+    $('s-judge').innerHTML = `${badge(j)}<span class="why">${esc(j.why)}</span>`;
+
+    chart.draw(u.data, ws, fc);
+    renderWeeks($('one-weeks'), ws);
+    renderEx(u); renderKcal(u);
+    ['ex', 'kcal'].forEach(k => { $('p-' + k).hidden = true; $('t-' + k).setAttribute('aria-expanded', 'false'); });
     scrollTo(0, 0);
   }
+
+  // 運動の記録
+  function renderEx(u) {
+    if (!exOk) { $('t-ex-sum').textContent = '準備中'; $('p-ex').innerHTML = '<div class="empty">運動の表がまだありません</div>'; return; }
+    const from = parse(today); from.setDate(from.getDate() - 27);
+    const recent = u.ex.filter(x => x.day >= ymd(from));
+    const mins = recent.reduce((a, x) => a + x.minutes, 0);
+    $('t-ex-sum').textContent = `直近4週 ${recent.length}回・${mins}分`;
+    if (!u.ex.length) { $('p-ex').innerHTML = '<div class="empty">運動の記録はまだありません</div>'; return; }
+    const kinds = {}; recent.forEach(x => kinds[x.kind] = (kinds[x.kind] || 0) + x.minutes);
+    const kindTxt = Object.entries(kinds).sort((a, b) => b[1] - a[1]).map(([k, m]) => `${k} ${m}分`).join('・');
+    const rows = u.ex.slice(0, 30).map(x => { const dt = parse(x.day);
+      return `<tr><td style="width:6.5em">${md(dt)}（${WD[dt.getDay()]}）</td><td>${esc(x.kind)}${x.memo ? `<div style="color:var(--text-3);font-size:13px">${esc(x.memo)}</div>` : ''}</td><td class="r" style="width:4.5em">${x.minutes}分</td></tr>`; }).join('');
+    $('p-ex').innerHTML = `<div class="kv" style="margin-bottom:8px">直近4週: ${kindTxt || 'なし'}</div><table><tbody>${rows}</tbody></table>`;
+  }
+
+  // カロリー
+  function renderKcal(u) {
+    const plan = kcalPlan(u.goal || {}, u.j.now, today);
+    $('t-kcal-sum').textContent = u.kcal ? `設定 ${u.kcal.toLocaleString()}kcal` : plan ? `目安 ${Math.round(plan.eat).toLocaleString()}kcal` : '';
+    let html = '<div class="row2">';
+    html += cell('1日に使う量の目安', plan ? `${Math.round(plan.tdee).toLocaleString()}<small>kcal</small>` : '—', plan ? '身長・年齢・性別・運動の習慣から' : '身長・年齢が入っていません');
+    html += cell('目標に向けた食事の目安', plan ? `${Math.round(plan.eat).toLocaleString()}<small>kcal</small>` : '—', plan && plan.diffDay ? `1日 ${plan.diffDay < 0 ? '−' : '+'}${Math.abs(Math.round(plan.diffDay)).toLocaleString()}kcal` : '');
+    html += `<div style="grid-column:1/-1">${cell('いま設定しているカロリー', u.kcal ? `${u.kcal.toLocaleString()}<small>kcal/日</small>` : '未設定', u.kcal ? 'お客様の画面にも表示しています' : '設定すると、お客様の画面に表示されます')}</div>`;
+    $('kcal-body').innerHTML = html + '</div>';
+    $('kcal-in').value = u.kcal || '';
+    $('kcal-form').hidden = !coachOk;
+    $('kcal-msg').textContent = coachOk ? '' : 'カロリー設定の表がまだありません';
+  }
+  async function saveKcal(val) {
+    const m = $('kcal-msg');
+    const row = { user_id: cur.id, kcal_target: val, updated_at: new Date().toISOString(), updated_by: me.id };
+    const { error } = await sb.from('coach_settings').upsert(row);
+    if (error) { m.style.color = 'var(--up)'; m.textContent = '保存できませんでした: ' + error.message; return; }
+    cur.kcal = val; people.find(x => x.id === cur.id).kcal = val;
+    renderKcal(cur);
+    m.style.color = 'var(--down)'; m.textContent = val ? `${val.toLocaleString()}kcal に設定しました` : '設定を解除しました';
+  }
+  $('kcal-form').addEventListener('submit', e => {
+    e.preventDefault();
+    const v = Math.round(parseFloat($('kcal-in').value));
+    if (!(v >= 800 && v <= 6000)) { $('kcal-msg').style.color = 'var(--up)'; $('kcal-msg').textContent = '800〜6000の数字を入れてください'; return; }
+    saveKcal(v);
+  });
+  $('kcal-clear').addEventListener('click', () => saveKcal(null));
+
+  ['ex', 'kcal'].forEach(k => $('t-' + k).addEventListener('click', () => {
+    const open = $('p-' + k).hidden; $('p-' + k).hidden = !open; $('t-' + k).setAttribute('aria-expanded', String(open));
+  }));
   $('members').addEventListener('click', e => { const m = e.target.closest('.member'); if (m) renderOne(m.dataset.id); });
   $('members').addEventListener('keydown', e => { const m = e.target.closest('.member'); if (m && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); renderOne(m.dataset.id); } });
   $('back').addEventListener('click', renderList);
