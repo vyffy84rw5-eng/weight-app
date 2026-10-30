@@ -52,6 +52,14 @@
         <input id="d" type="date" aria-label="記録する日">
       </div>
       <div class="msg" id="msg" role="status"></div>
+      <div class="meal-check" id="meal-check" hidden>
+        <div class="mc-q" id="mc-q">昨日の食事は？</div>
+        <div class="mc-btns" role="group" aria-labelledby="mc-q">
+          <button type="button" class="mc" data-r="0">設定どおり</button>
+          <button type="button" class="mc" data-r="1">少しオーバー</button>
+          <button type="button" class="mc" data-r="2">かなりオーバー</button>
+        </div>
+      </div>
     </section>
 
     <section class="stats" id="stats"></section>
@@ -146,6 +154,7 @@
   let goal = {};
   let exercises = [];  // null = 表がまだ無い
   let coachKcal = null;
+  let meals = {};      // { day: 0|1|2 }  null = 表がまだ無い
   const chart = createChart({ svg: $('chart'), tip: $('tip'), legend: $('legend') });
 
   // ---------- ログイン（メール＋パスワード） ----------
@@ -200,15 +209,17 @@
     $('view-login').hidden = true; $('view-app').hidden = false;
     $('me-email').textContent = me.email || '';
     $('msg').textContent = '読み込み中…'; $('msg').style.color = 'var(--text-3)';
-    const [w, g, p, ex, co] = await Promise.all([
+    const [w, g, p, ex, co, mc] = await Promise.all([
       sb.from('weights').select('day,kg,source').eq('user_id', me.id).order('day'),
       sb.from('goals').select('*').eq('user_id', me.id).maybeSingle(),
       sb.from('profiles').select('is_admin').eq('id', me.id).maybeSingle(),
       sb.from('exercises').select('id,day,kind,minutes,memo').eq('user_id', me.id).order('day', { ascending: false }).order('id', { ascending: false }).limit(200),
       sb.from('coach_settings').select('kcal_target').eq('user_id', me.id).maybeSingle(),
+      sb.from('meal_checks').select('day,rating').eq('user_id', me.id),
     ]);
     exercises = ex.error ? null : (ex.data || []);
     coachKcal = co.error ? null : (co.data?.kcal_target || null);
+    meals = mc.error ? null : Object.fromEntries((mc.data || []).map(r => [r.day, r.rating]));
     $('pw-user').value = me.email || '';
     if (w.error) { $('msg').style.color = 'var(--up)'; $('msg').textContent = '記録を読み込めませんでした。電波を確かめて開き直してください。'; return; }
     data = {}; sources = {};
@@ -247,12 +258,13 @@
     $('goal-out').innerHTML = goalHtml(goal, data, ws, fc, today);
     renderCoach();
     renderEx();
+    renderMeal();
   }
 
   // ---------- 記録 ----------
   $('d').value = today; $('d').max = today;
   function syncInput() { const v = data[$('d').value]; $('w').value = v != null ? fmt(v) : ''; }
-  $('d').addEventListener('change', () => { syncInput(); $('msg').textContent = ''; });
+  $('d').addEventListener('change', () => { syncInput(); $('msg').textContent = ''; renderMeal(); });
   $('form').addEventListener('submit', async e => {
     e.preventDefault();
     const v = parseFloat(String($('w').value).replace(',', '.'));
@@ -291,6 +303,33 @@
     if (e.target.id === 'more') { showAll = !showAll; renderDays(); }
   });
 
+
+
+  // ---------- 食事の振り返り（記録する日の前日について1タップ） ----------
+  const mealDay = () => { const x = parse($('d').value || today); x.setDate(x.getDate() - 1); return ymd(x); };
+  function renderMeal() {
+    $('meal-check').hidden = meals === null;
+    if (meals === null) return;
+    const day = mealDay(), dt = parse(day);
+    const isYesterday = $('d').value === today;
+    $('mc-q').textContent = isYesterday ? `昨日（${md(dt)}）の食事は？` : `${md(dt)}（${WD[dt.getDay()]}）の食事は？`;
+    document.querySelectorAll('.mc').forEach(b => {
+      const on = meals[day] === Number(b.dataset.r);
+      b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on));
+    });
+  }
+  document.querySelector('.mc-btns').addEventListener('click', async e => {
+    const b = e.target.closest('.mc'); if (!b) return;
+    const day = mealDay(), rating = Number(b.dataset.r), before = meals[day];
+    meals[day] = rating; renderMeal();
+    const { error } = await sb.from('meal_checks').upsert({ user_id: me.id, day, rating, updated_at: new Date().toISOString() });
+    const msg = $('msg');
+    if (error) {
+      if (before == null) delete meals[day]; else meals[day] = before;
+      renderMeal(); msg.style.color = 'var(--up)'; msg.textContent = '食事の振り返りを保存できませんでした。もう一度押してください。'; return;
+    }
+    msg.style.color = 'var(--down)'; msg.textContent = `${md(parse(day))}の食事「${WP.MEAL_LABELS[rating]}」を記録しました`;
+  });
 
   // ---------- トレーナーが決めたカロリー ----------
   function renderCoach() {

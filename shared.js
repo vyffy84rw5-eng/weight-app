@@ -16,8 +16,8 @@
     return x;
   }
   const fmt = v => Number(v).toFixed(1);
-  const signed = v => (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v).toFixed(1);
-  const cls = v => v < 0 ? 'down' : v > 0 ? 'up' : '';
+  const signed = v => (Math.abs(v) < 0.05 ? '±' : v > 0 ? '+' : '−') + Math.abs(v).toFixed(1);
+  const cls = v => Math.abs(v) < 0.05 ? '' : v < 0 ? 'down' : 'up';
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   // ---------- 計算 ----------
@@ -411,5 +411,32 @@
     </div>`;
   }
 
-  window.WP = { MIN_DAYS, DAY, ymd, parse, md, WD, fmt, signed, cls, esc, weeks, forecast, renderStats, createChart, renderWeeks, goalHtml, tdeeOf, kcalPlan, judge, badge, pfc, mealExamples, pfcHtml };
+
+  // ---------- 食事の振り返り（0=設定どおり 1=少しオーバー 2=かなりオーバー） ----------
+  const MEAL_LABELS = ['設定どおり', '少しオーバー', 'かなりオーバー'];
+  // 直近14日（昨日まで）の集計
+  function mealStats(meals, todayStr, span = 14) {
+    const to = parse(todayStr); to.setDate(to.getDate() - 1);
+    const from = new Date(to); from.setDate(from.getDate() - (span - 1));
+    const a = ymd(from), b = ymd(to);
+    const rows = Object.entries(meals || {}).filter(([d]) => d >= a && d <= b);
+    const cnt = [0, 0, 0]; rows.forEach(([, r]) => cnt[r]++);
+    const n = rows.length;
+    return { span, n, ok: cnt[0], little: cnt[1], over: cnt[2], rate: n ? cnt[0] / n : null };
+  }
+  // 体重の判定と食事を合わせた、トレーナー向けのひとこと
+  function mealAdvice(j, ms) {
+    if (!ms || ms.n < 5) return ms && ms.n ? `食事の振り返りが少なめです（${ms.span}日中${ms.n}日）` : '食事の振り返りがまだありません';
+    const rateTxt = `食事は${ms.n}日中${ms.ok}日 設定どおり`;
+    if (j.level === 'follow' || j.level === 'slow') {
+      if (j.why && j.why.includes('速すぎ')) return `${rateTxt}。食べる量が少なすぎないか確認を`;
+      if (ms.over >= 3) return `${rateTxt}。かなりオーバーの日が${ms.over}日あるので、食事の声かけを`;
+      if (ms.rate >= 0.7) return `${rateTxt}。守れているので、設定カロリーの見直しを`;
+      if (ms.rate < 0.5) return `${rateTxt}。食事の声かけを`;
+      return `${rateTxt}。食事と量の両方を確認`;
+    }
+    return rateTxt;
+  }
+
+  window.WP = { MIN_DAYS, DAY, ymd, parse, md, WD, fmt, signed, cls, esc, weeks, forecast, renderStats, createChart, renderWeeks, goalHtml, tdeeOf, kcalPlan, judge, badge, pfc, mealExamples, pfcHtml, MEAL_LABELS, mealStats, mealAdvice };
 })();

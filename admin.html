@@ -34,6 +34,7 @@
     <section class="card">
       <div class="sum-grid" id="sum"></div>
       <div class="sum-judge" id="s-judge"></div>
+      <div id="s-advice"></div>
     </section>
 
     <section class="card">
@@ -91,24 +92,26 @@
 
   // 全員分をまとめて読む（RLSで管理者だけ全件が返る）
   msg('読み込み中…');
-  const [pr, wr, gr, er, cr] = await Promise.all([
+  const [pr, wr, gr, er, cr, mr] = await Promise.all([
     sb.from('profiles').select('id,email,display_name,is_admin,created_at'),
     sb.from('weights').select('user_id,day,kg,source').order('day').limit(100000),
     sb.from('goals').select('*'),
     sb.from('exercises').select('user_id,day,kind,minutes,memo').order('day', { ascending: false }).limit(100000),
     sb.from('coach_settings').select('user_id,kcal_target'),
+    sb.from('meal_checks').select('user_id,day,rating').limit(100000),
   ]);
   const firstErr = [pr, wr, gr].find(r => r.error);
   if (firstErr) { msg('読み込めませんでした: ' + firstErr.error.message, true); return; }
   // 運動とカロリー設定は、表がまだ無くても他は見られるようにする
-  const exOk = !er.error, coachOk = !cr.error;
+  const exOk = !er.error, coachOk = !cr.error, mealOk = !mr.error;
   msg('');
 
   const byUser = new Map();
-  pr.data.forEach(u => byUser.set(u.id, { ...u, data: {}, goal: {}, ex: [], kcal: null }));
+  pr.data.forEach(u => byUser.set(u.id, { ...u, data: {}, goal: {}, ex: [], kcal: null, meals: {} }));
   wr.data.forEach(r => { const u = byUser.get(r.user_id); if (u) u.data[r.day] = Number(r.kg); });
   gr.data.forEach(g => { const u = byUser.get(g.user_id); if (u) u.goal = g; });
   if (exOk) er.data.forEach(x => { const u = byUser.get(x.user_id); if (u) u.ex.push(x); });
+  if (mealOk) mr.data.forEach(m => { const u = byUser.get(m.user_id); if (u) u.meals[m.day] = m.rating; });
   if (coachOk) cr.data.forEach(c => { const u = byUser.get(c.user_id); if (u) u.kcal = c.kcal_target; });
 
   const ORDER = { follow: 0, slow: 1, wait: 2, none: 3, ok: 4 };
@@ -116,7 +119,9 @@
     .filter(u => !u.is_admin || Object.keys(u.data).length)   // 記録のない管理者は一覧に出さない
     .map(u => {
       const keys = Object.keys(u.data).sort();
-      return { ...u, last: keys[keys.length - 1] || null, days: keys.length, j: judge(u.goal, u.data, today) };
+      const j = judge(u.goal, u.data, today);
+      const ms = mealOk ? WP.mealStats(u.meals, today) : null;
+      return { ...u, last: keys[keys.length - 1] || null, days: keys.length, j, ms };
     })
     .sort((a, b) => (ORDER[a.j.level] - ORDER[b.j.level]) || (b.last || '').localeCompare(a.last || ''));
 
@@ -138,7 +143,7 @@
       return `<div class="member" data-id="${esc(u.id)}" role="button" tabindex="0">
         <div class="name-row"><span class="name">${esc(nameOf(u))}</span>${badge(u.j)}</div>
         <div class="val">${cur ? fmt(cur.avg) + ' kg' : '—'}</div>
-        <div class="meta ${ago == null || ago > 7 ? 'stale' : ''}">${lastTxt}・${u.days}日分</div>
+        <div class="meta ${ago == null || ago > 7 ? 'stale' : ''}">${lastTxt}・${u.days}日分${u.ms && u.ms.n ? `・食事${u.ms.ok}/${u.ms.n}` : ''}</div>
         <div class="pace ${u.j.fc ? cls(u.j.fc.perMonth) : ''}">${u.j.fc ? signed(u.j.fc.perMonth) + 'kg/月' : 'ペース未算出'}</div>
       </div>`;
     }).join('');
@@ -173,6 +178,11 @@
       c('必要な月ペース', j.need == null ? '—' : `${signed(j.need)}<small>kg/月</small>`, j.need == null ? '目標なし' : '目標に間に合う') +
       c('記録', `${u.days}<small>日分</small>`, u.last ? `最後 ${md(parse(u.last))}` : '');
     $('s-judge').innerHTML = `${badge(j)}<span>${esc(j.why)}</span>`;
+    if (mealOk) {
+      const from = parse(today); const dots = [];
+      for (let i = 14; i >= 1; i--) { const x = new Date(from); x.setDate(x.getDate() - i); const r = u.meals[ymd(x)]; dots.push(`<i class="${r == null ? '' : 'r' + r}" title="${md(x)} ${r == null ? '未記入' : WP.MEAL_LABELS[r]}"></i>`); }
+      $('s-advice').innerHTML = `<div class="meal-dots" aria-label="直近14日の食事の振り返り">${dots.join('')}</div><div class="advice">${esc(WP.mealAdvice(j, u.ms))}</div>`;
+    } else $('s-advice').innerHTML = '';
 
     chart.draw(u.data, ws, fc);
     renderWeeks($('one-weeks'), ws);
