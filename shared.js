@@ -426,6 +426,8 @@
   }
   // 体重の判定と食事を合わせた、トレーナー向けのひとこと
   function mealAdvice(j, ms) {
+    // 体重の記録が止まっている人は、食事より先に記録の声かけ（守れていても「設定カロリーの見直し」は出さない）
+    if (j.gapDays > 7) return `${ms && ms.n ? `食事は${ms.n}日分あります。` : ''}体重の記録が${j.gapDays}日止まっているので、まず記録の声かけを`;
     if (!ms || ms.n < 5) return ms && ms.n ? `食事の振り返りが少なめです（${ms.span}日中${ms.n}日）` : '食事の振り返りがまだありません';
     const rateTxt = `食事は${ms.n}日中${ms.ok}日 設定どおり`;
     if (j.level === 'follow' || j.level === 'slow') {
