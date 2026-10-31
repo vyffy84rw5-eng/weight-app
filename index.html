@@ -10,7 +10,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <title>体重ペース</title>
-<link rel="stylesheet" href="style.css?v=20261031b">
+<link rel="stylesheet" href="style.css?v=20261031c">
 </head>
 <body>
 <main>
@@ -134,6 +134,7 @@
         <li><b>合言葉を貼り付ける</b><br>追加するときに聞かれます。下のボタンで写して、貼り付けてください。
           <div class="hc-token"><code id="hc-token">—</code><button class="small-btn" type="button" id="hc-copy">写す</button></div>
           <span class="muted-s">合言葉は人に教えないでください。</span>
+          <div class="hc-reset" id="hc-reset-wrap" hidden><button class="link" type="button" id="hc-reset">合言葉を作り直す（人に知られたとき）</button></div>
         </li>
         <li><b>自動で動くようにする</b><br>「ショートカット」アプリ →「オートメーション」→「＋」→「App」→「ヘルスケア」（体重計のアプリでも可）を選び、「開いたとき」「すぐに実行」→「体重ペースに送る」。<br><span class="muted-s">iPhoneにロックがかかっている間はヘルスケアを読めないため、アプリを開いたときに動かします。7日前までさかのぼって送ります。</span></li>
       </ol>
@@ -287,10 +288,12 @@
   // ---------- ヘルスケアから自動で記録（iPhoneのショートカット → ingest_weight） ----------
   const SHORTCUT_NAME = '体重ペースに送る';
   const SHORTCUT_URL = '';   // iCloudの共有リンク（https://www.icloud.com/shortcuts/…）。空のあいだは「準備中」
+  const RESET_READY = false;  // 004_reset_ingest_token.sql を本番に流したら true にする
   let ingestToken = null;
   function renderHealth() {
     $('hc-token').textContent = ingestToken || '—';
     $('hc-copy').disabled = !ingestToken;
+    $('hc-reset-wrap').hidden = !RESET_READY || !ingestToken;
     $('hc-add').hidden = !SHORTCUT_URL; $('hc-add-wait').hidden = !!SHORTCUT_URL;
     if (SHORTCUT_URL) $('hc-add').href = SHORTCUT_URL;
     const last = Object.keys(sources).filter(d => sources[d] === 'health').sort().pop();
@@ -309,6 +312,22 @@
     }
     $('hc-msg').style.color = ok ? '' : 'var(--up)';
     $('hc-msg').textContent = ok ? '合言葉を写しました' : '写せませんでした。合言葉を長押しして写してください';
+  });
+  // 作り直し: 2回押しで実行。古い合言葉はその場で使えなくなるので、ショートカットに新しい合言葉を入れ直してもらう
+  let resetArmed = null;
+  $('hc-reset').addEventListener('click', async () => {
+    const m = $('hc-msg');
+    if (!resetArmed) {
+      $('hc-reset').textContent = 'もう一度押すと作り直します（今のショートカットは止まります）';
+      resetArmed = setTimeout(() => { resetArmed = null; $('hc-reset').textContent = '合言葉を作り直す（人に知られたとき）'; }, 5000);
+      return;
+    }
+    clearTimeout(resetArmed); resetArmed = null;
+    $('hc-reset').textContent = '合言葉を作り直す（人に知られたとき）';
+    const { data: t, error } = await sb.rpc('reset_ingest_token');
+    if (error || !t) { m.style.color = 'var(--up)'; m.textContent = '作り直せませんでした。電波を確かめて、もう一度お試しください'; return; }
+    ingestToken = t; renderHealth();
+    m.style.color = ''; m.textContent = '新しい合言葉にしました。ショートカットを入れ直すか、ショートカットの中の合言葉を新しいものに貼り替えてください';
   });
   $('hc-run').addEventListener('click', () => {
     location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_NAME);

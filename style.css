@@ -266,3 +266,4 @@ td.muted { color: var(--text-3); }
 
 /* 電波がないときの帯 */
 .offline-bar { position: sticky; top: 0; z-index: 10; background: #fff4e0; color: var(--slow); font-size: 13px; font-weight: 600; text-align: center; padding: 8px 16px; margin: 0 -16px 12px; }
+.hc-reset .link { background: none; color: var(--text-3); font-size: 12px; padding: 6px 0 0; text-decoration: underline; text-align: left; }
