@@ -237,7 +237,7 @@ td.muted { color: var(--text-3); }
 .meal-check { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .mc-q { font-size: 14px; color: var(--text-2); margin-bottom: 8px; }
 .mc-btns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.mc { background: var(--bg); color: var(--text); font-size: 14px; font-weight: 500; padding: 11px 4px; border-radius: 12px; border: 1px solid transparent; white-space: nowrap; }
+.mc { background: var(--bg); color: var(--text); font-size: min(14px, 3.4vw); font-weight: 500; padding: 11px 2px; border-radius: 12px; border: 1px solid transparent; white-space: nowrap; }
 .mc.on[data-r="0"] { background: var(--ok-bg); color: var(--down); border-color: var(--down); }
 .mc.on[data-r="1"] { background: var(--slow-bg); color: var(--slow); border-color: var(--slow); }
 .mc.on[data-r="2"] { background: var(--follow-bg); color: var(--up); border-color: var(--up); }
