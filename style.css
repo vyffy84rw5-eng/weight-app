@@ -258,3 +258,8 @@ td.muted { color: var(--text-3); }
 .hc-token { display: flex; gap: 8px; align-items: center; margin: 6px 0 2px; }
 .hc-token code { flex: 1; min-width: 0; font-size: 12px; background: var(--bg); padding: 8px 10px; border-radius: 10px; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
 .muted-s { font-size: 12px; color: var(--text-3); }
+.hc-make summary { font-size: 15px; font-weight: 600; cursor: pointer; }
+.hc-make[open] summary { margin-bottom: 10px; }
+.hc-copy-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; align-items: center; margin: 10px 0; }
+.hc-copy-row span { grid-column: 1 / -1; font-size: 12px; color: var(--text-3); }
+.hc-copy-row code { min-width: 0; font-size: 12px; background: var(--bg); padding: 8px 10px; border-radius: 10px; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }

@@ -23,6 +23,25 @@
       <h2>お客様（要フォローの人から順に）</h2>
       <div id="members"></div>
     </section>
+    <details class="card hc-make">
+      <summary>ヘルスケア用ショートカットの作り方（管理者が1回だけ）</summary>
+      <p class="kv">iPhoneの「ショートカット」アプリで作り、iCloudのリンクでお客様に配ります。入れる値は「写す」で写して貼り付けます。</p>
+      <div class="hc-copy-row"><span>送り先のURL</span><code id="hc-url"></code><button class="small-btn" type="button" data-copy="hc-url">写す</button></div>
+      <div class="hc-copy-row"><span>apikey（公開してよい鍵）</span><code id="hc-key"></code><button class="small-btn" type="button" data-copy="hc-key">写す</button></div>
+      <div class="hc-copy-row"><span>日付の形</span><code id="hc-fmt">yyyy-MM-dd</code><button class="small-btn" type="button" data-copy="hc-fmt">写す</button></div>
+      <ol class="hc-steps">
+        <li>「＋」で新しいショートカット。名前は <b>体重ペースに送る</b>（1文字でも違うと「今すぐ送る」が動きません）。</li>
+        <li>「テキスト」を置き、自分の画面の合言葉を貼る。</li>
+        <li>「ヘルスケアサンプルを検索」: 種類＝体重、条件＝開始日が過去7日間、並び順＝開始日・古い順。</li>
+        <li>「各項目を繰り返す」で、検索した体重を1件ずつ回す。中に次の2つを置く。</li>
+        <li>「日付をフォーマット」: 繰り返し項目の開始日を、カスタムの形（上の「日付の形」）にする。</li>
+        <li>「URLの内容を取得」: URL＝送り先のURL、方法＝POST、ヘッダ＝apikey と Content-Type（application/json）、本文＝JSON。p_token（テキスト）＝手順2のテキスト、p_day（テキスト）＝フォーマットした日付、p_kg（数字）＝繰り返し項目の値。</li>
+        <li>繰り返しの外に「通知を表示」（体重を送りました）。</li>
+        <li>一度動かす。自分の画面の「ヘルスケアから自動で記録」が「つながっています」になれば成功。</li>
+        <li>ショートカットの設定 →「読み込みの質問」で手順2のテキストに「アプリに出ている合言葉を貼り付けてください」を付け、共有 →「iCloudリンクをコピー」。リンクを秘書に送る。</li>
+      </ol>
+      <div class="msg" id="hc-msg" role="status"></div>
+    </details>
   </section>
 
   <!-- 1人の詳しい画面 -->
@@ -245,6 +264,22 @@
   $('members').addEventListener('click', e => { const m = e.target.closest('.member'); if (m) renderOne(m.dataset.id); });
   $('members').addEventListener('keydown', e => { const m = e.target.closest('.member'); if (m && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); renderOne(m.dataset.id); } });
   $('back').addEventListener('click', renderList);
+
+  // ヘルスケア用ショートカットの作り方: 入れる値を写すボタン
+  $('hc-url').textContent = WP_CONFIG.url + '/rest/v1/rpc/ingest_weight';
+  $('hc-key').textContent = WP_CONFIG.key;
+  document.querySelector('.hc-make').addEventListener('click', async e => {
+    const b = e.target.closest('[data-copy]'); if (!b) return;
+    const el = $(b.dataset.copy); let ok = false;
+    try { await navigator.clipboard.writeText(el.textContent); ok = true; }
+    catch {
+      const r = document.createRange(); r.selectNodeContents(el);
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      try { ok = document.execCommand('copy'); } catch {}
+    }
+    $('hc-msg').style.color = ok ? '' : 'var(--up)';
+    $('hc-msg').textContent = ok ? `${b.previousElementSibling.previousElementSibling.textContent}を写しました` : '写せませんでした。長押しして写してください';
+  });
   renderList();
 })();
 </script>
