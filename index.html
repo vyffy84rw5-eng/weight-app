@@ -10,7 +10,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <title>体重ペース</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=20261031">
 </head>
 <body>
 <main>
@@ -122,6 +122,25 @@
       <div id="days"></div>
     </section>
 
+    <section class="card" id="hc-card">
+      <h2>ヘルスケアから自動で記録</h2>
+      <p class="kv">体重計のアプリなどからiPhoneの「ヘルスケア」に入った体重を、ここへ自動で送れます。手で入れた日は上書きしません。</p>
+      <div class="hc-status" id="hc-status"></div>
+      <ol class="hc-steps">
+        <li><b>ショートカットを追加</b><br>
+          <a class="small-btn hc-btn" id="hc-add" href="#" target="_blank" rel="noopener">ショートカットを追加</a>
+          <span class="muted-s" id="hc-add-wait" hidden>（準備中です。もうしばらくお待ちください）</span>
+        </li>
+        <li><b>合言葉を貼り付ける</b><br>追加するときに聞かれます。下のボタンで写して、貼り付けてください。
+          <div class="hc-token"><code id="hc-token">—</code><button class="small-btn" type="button" id="hc-copy">写す</button></div>
+          <span class="muted-s">合言葉は人に教えないでください。</span>
+        </li>
+        <li><b>自動で動くようにする</b><br>「ショートカット」アプリ →「オートメーション」→「＋」→「App」→「ヘルスケア」（体重計のアプリでも可）を選び、「開いたとき」「すぐに実行」→「体重ペースに送る」。<br><span class="muted-s">iPhoneにロックがかかっている間はヘルスケアを読めないため、アプリを開いたときに動かします。7日前までさかのぼって送ります。</span></li>
+      </ol>
+      <button class="small-btn" type="button" id="hc-run">今すぐ送る</button>
+      <div class="msg" id="hc-msg" role="status"></div>
+    </section>
+
     <section class="card">
       <h2>アカウント</h2>
       <div class="kv">ログイン中: <span id="me-email"></span></div>
@@ -209,10 +228,12 @@
     $('view-login').hidden = true; $('view-app').hidden = false;
     $('me-email').textContent = me.email || '';
     $('msg').textContent = '読み込み中…'; $('msg').style.color = 'var(--text-3)';
-    const [w, g, p, ex, co, mc] = await Promise.all([
+    const [w, g, p, tk, ex, co, mc] = await Promise.all([
       sb.from('weights').select('day,kg,source').eq('user_id', me.id).order('day'),
       sb.from('goals').select('*').eq('user_id', me.id).maybeSingle(),
       sb.from('profiles').select('is_admin').eq('id', me.id).maybeSingle(),
+      // 合言葉は別に読む（読めなくても管理画面へのリンクに影響させない）
+      sb.from('profiles').select('ingest_token').eq('id', me.id).maybeSingle(),
       sb.from('exercises').select('id,day,kind,minutes,memo').eq('user_id', me.id).order('day', { ascending: false }).order('id', { ascending: false }).limit(200),
       sb.from('coach_settings').select('kcal_target').eq('user_id', me.id).maybeSingle(),
       sb.from('meal_checks').select('day,rating').eq('user_id', me.id),
@@ -229,6 +250,7 @@
       if (goal[k] != null) $('g-' + k).value = k === 'activity' ? String(Number(goal[k])) : goal[k];
     });
     $('to-admin').hidden = !p.data?.is_admin;
+    ingestToken = tk.error ? null : (tk.data?.ingest_token || null);
     $('msg').textContent = '';
     syncInput();
     render();
@@ -259,7 +281,39 @@
     renderCoach();
     renderEx();
     renderMeal();
+    renderHealth();
   }
+
+  // ---------- ヘルスケアから自動で記録（iPhoneのショートカット → ingest_weight） ----------
+  const SHORTCUT_NAME = '体重ペースに送る';
+  const SHORTCUT_URL = '';   // iCloudの共有リンク（https://www.icloud.com/shortcuts/…）。空のあいだは「準備中」
+  let ingestToken = null;
+  function renderHealth() {
+    $('hc-token').textContent = ingestToken || '—';
+    $('hc-copy').disabled = !ingestToken;
+    $('hc-add').hidden = !SHORTCUT_URL; $('hc-add-wait').hidden = !!SHORTCUT_URL;
+    if (SHORTCUT_URL) $('hc-add').href = SHORTCUT_URL;
+    const last = Object.keys(sources).filter(d => sources[d] === 'health').sort().pop();
+    $('hc-status').innerHTML = last
+      ? `<span class="hc-on">つながっています</span> 最後に届いた記録: ${md(parse(last))}（${fmt(data[last])}kg）`
+      : '<span class="hc-off">まだ届いていません</span>';
+  }
+  $('hc-copy').addEventListener('click', async () => {
+    let ok = false;
+    try { await navigator.clipboard.writeText(ingestToken); ok = true; }
+    catch {
+      // 古い写し方（選んでからコピー）で、もう一度ためす
+      const r = document.createRange(); r.selectNodeContents($('hc-token'));
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      try { ok = document.execCommand('copy'); } catch {}
+    }
+    $('hc-msg').style.color = ok ? '' : 'var(--up)';
+    $('hc-msg').textContent = ok ? '合言葉を写しました' : '写せませんでした。合言葉を長押しして写してください';
+  });
+  $('hc-run').addEventListener('click', () => {
+    location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT_NAME);
+    $('hc-msg').style.color = ''; $('hc-msg').textContent = '送り終わったら、このアプリを開き直すと記録に出ます';
+  });
 
   // ---------- 記録 ----------
   $('d').value = today; $('d').max = today;

@@ -246,3 +246,15 @@ td.muted { color: var(--text-3); }
 .meal-dots { display: flex; gap: 3px; margin-top: 8px; flex-wrap: wrap; }
 .meal-dots i { width: 14px; height: 14px; border-radius: 4px; background: var(--line); display: inline-block; }
 .meal-dots i.r0 { background: var(--down); } .meal-dots i.r1 { background: var(--f); } .meal-dots i.r2 { background: var(--up); }
+
+/* ヘルスケアから自動で記録 */
+.hc-status { font-size: 14px; color: var(--text-2); margin: 10px 0 4px; }
+.hc-on, .hc-off { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; margin-right: 6px; }
+.hc-on { background: var(--ok-bg); color: var(--down); }
+.hc-off { background: var(--bg); color: var(--text-3); }
+.hc-steps { margin: 10px 0 14px; padding-left: 20px; font-size: 14px; color: var(--text); line-height: 1.7; }
+.hc-steps li { margin-bottom: 12px; }
+.hc-btn { display: inline-block; margin-top: 6px; text-decoration: none; }
+.hc-token { display: flex; gap: 8px; align-items: center; margin: 6px 0 2px; }
+.hc-token code { flex: 1; min-width: 0; font-size: 12px; background: var(--bg); padding: 8px 10px; border-radius: 10px; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
+.muted-s { font-size: 12px; color: var(--text-3); }
