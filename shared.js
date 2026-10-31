@@ -440,5 +440,20 @@
     return rateTxt;
   }
 
+  // ---------- 電波がないとき: 上に帯を出す＋画面だけは開けるようにする（sw.js） ----------
+  function offlineBar() {
+    let bar = document.getElementById('offline-bar');
+    if (!bar) {
+      bar = document.createElement('div'); bar.id = 'offline-bar'; bar.className = 'offline-bar'; bar.setAttribute('role', 'status');
+      bar.textContent = '電波がありません。つながると、記録の読み込みと保存ができます。';
+      document.body.prepend(bar);
+    }
+    bar.hidden = navigator.onLine;
+  }
+  window.addEventListener('online', offlineBar);
+  window.addEventListener('offline', offlineBar);
+  document.addEventListener('DOMContentLoaded', offlineBar);
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('./sw.js').catch(() => {});
+
   window.WP = { MIN_DAYS, DAY, ymd, parse, md, WD, fmt, signed, cls, esc, weeks, forecast, renderStats, createChart, renderWeeks, goalHtml, tdeeOf, kcalPlan, judge, badge, pfc, mealExamples, pfcHtml, MEAL_LABELS, mealStats, mealAdvice };
 })();
